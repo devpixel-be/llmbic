@@ -1,0 +1,58 @@
+{
+  "name": "llmbic",
+  "version": "1.0.0",
+  "description": "Hybrid data extraction — deterministic rules + LLM fallback, with per-field confidence scoring.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Nicolas Smeets <contact@devpixel.be>",
+  "homepage": "https://github.com/devpixel-be/llmbic#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devpixel-be/llmbic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/devpixel-be/llmbic/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "example:ollama": "tsx examples/ollama.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "ollama": "^0.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
+  },
+  "keywords": [
+    "extraction",
+    "llm",
+    "structured-data",
+    "hybrid",
+    "confidence",
+    "zod",
+    "rules",
+    "deterministic",
+    "ai"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
