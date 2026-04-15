@@ -1,5 +1,10 @@
 # Llmbic
 
+[![npm version](https://img.shields.io/npm/v/llmbic.svg)](https://www.npmjs.com/package/llmbic)
+[![CI](https://github.com/devpixel-be/llmbic/actions/workflows/ci.yml/badge.svg)](https://github.com/devpixel-be/llmbic/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/llmbic.svg)](./LICENSE)
+[![node](https://img.shields.io/node/v/llmbic.svg)](https://nodejs.org)
+
 Hybrid data extraction — deterministic rules + LLM fallback, with per-field confidence scoring.
 
 The name folds **LLM** into [*lambic*](https://en.wikipedia.org/wiki/Lambic), the Belgian beer made by blending wild fermentation with a controlled process. Same idea here: LLMs are unpredictable, rules are rigid, and the mix produces something reliable.
