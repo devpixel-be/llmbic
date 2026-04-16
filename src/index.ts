@@ -52,6 +52,7 @@ export type {
   FieldCompare,
   FieldMergePolicy,
   FieldMergeResult,
+  FieldSource,
   LlmResult,
   MergeApplyOptions,
   Normalizer,

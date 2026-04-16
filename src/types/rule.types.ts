@@ -16,6 +16,13 @@ export type RuleMatch<T> = {
  * content. `extract` returns `null` when the rule does not apply.
  */
 export type ExtractionRule = {
+  /**
+   * Stable identifier surfaced in `ExtractionResult.sources` when this rule
+   * produces the kept value. Optional: when omitted, `rule.apply` assigns
+   * `${field}#${declarationIndex}` based on the rule's position in the
+   * `rules` array.
+   */
+  id?: string;
   /** Name of the schema field this rule targets. */
   field: string;
   /** Inspects `content` and returns a match, or `null` if nothing was found. */
@@ -34,6 +41,15 @@ export type RulesResult<T> = {
   values: Partial<T>;
   /** Confidence score per extracted field, in `[0, 1]`. */
   confidence: Partial<Record<keyof T, number>>;
+  /**
+   * Identifier of the winning rule per extracted field. Always populated by
+   * {@link rule.apply}: either the rule's declared `id` or
+   * `${field}#${declarationIndex}` from the source `rules` array. Optional
+   * on the type for back-compat with callers who build {@link RulesResult}
+   * by hand; consumers (including {@link merge.apply}) tolerate its absence
+   * and surface an empty `ruleId` in {@link FieldSource} when missing.
+   */
+  sourceIds?: Partial<Record<keyof T, string>>;
   /** Schema fields for which no rule produced a valid value. */
   missing: (keyof T)[];
 };

@@ -8,6 +8,7 @@ import type {
   ExtractionResult,
   FieldMergePolicy,
   FieldMergeResult,
+  FieldSource,
   LlmResult,
   MergeApplyOptions,
   Normalizer,
@@ -16,6 +17,7 @@ import type {
 type FusionOutcome<T> = {
   data: ExtractedData<T>;
   confidence: { [K in keyof T]: number | null };
+  sources: { [K in keyof T]: FieldSource | null };
   conflicts: Conflict[];
   missing: (keyof T)[];
   rulesMatched: number;
@@ -31,10 +33,12 @@ function fuseAllFields<T>(
   rulesResult: RulesResult<T>,
   llmResult: LlmResult | null,
   policy: Partial<FieldMergePolicy> | undefined,
+  policyByField: { [K in keyof T]?: Partial<FieldMergePolicy> } | undefined,
   logger: Logger | undefined,
 ): FusionOutcome<T> {
   const data = {} as ExtractedData<T>;
   const confidence = {} as { [K in keyof T]: number | null };
+  const sources = {} as { [K in keyof T]: FieldSource | null };
   const conflicts: Conflict[] = [];
   const missing: (keyof T)[] = [];
   let rulesMatched = 0;
@@ -55,10 +59,16 @@ function fuseAllFields<T>(
 
     const llmValue = llmResult?.values[field as string] ?? null;
 
-    const fused = merge.field(field as string, ruleMatch, llmValue, policy, logger);
+    const fieldOverride = policyByField?.[field];
+    const resolvedPolicy =
+      fieldOverride === undefined ? policy : { ...policy, ...fieldOverride };
+    const ruleId = rulesResult.sourceIds?.[field];
+
+    const fused = merge.field(field as string, ruleMatch, llmValue, resolvedPolicy, logger);
 
     data[field] = fused.value as T[keyof T] | null;
     confidence[field] = fused.confidence;
+    sources[field] = deriveSource(fused, ruleMatch, llmValue, resolvedPolicy, ruleId);
     if (fused.conflict !== undefined) {
       conflicts.push(fused.conflict);
     }
@@ -67,7 +77,54 @@ function fuseAllFields<T>(
     }
   }
 
-  return { data, confidence, conflicts, missing, rulesMatched };
+  return { data, confidence, sources, conflicts, missing, rulesMatched };
+}
+
+/**
+ * Classify the origin of a fused value into a {@link FieldSource}. Mirrors
+ * the decision tree of {@link merge.field} without re-running the strategy:
+ *
+ * - rule alone -> `'rule'`
+ * - LLM alone -> `'llm'`
+ * - both null -> `null`
+ * - both present, conflict recorded -> `'flag'` (only the `'flag'` strategy
+ *   produces a conflict)
+ * - both present, no conflict, kept value differs from the rule -> `'llm'`
+ *   (only `'prefer-llm'` reaches this case)
+ * - both present, no conflict, kept value matches the rule -> `'agreement'`
+ *   when the policy's `compare` returns true, else `'rule'` (`'prefer-rule'`
+ *   silent path)
+ *
+ * `ruleId` is `''` when the rule provided no declared id and `rule.apply`
+ * was bypassed by the caller.
+ */
+function deriveSource(
+  fused: FieldMergeResult<unknown>,
+  ruleMatch: RuleMatch<unknown> | null,
+  llmValue: unknown,
+  policy: Partial<FieldMergePolicy> | undefined,
+  ruleId: string | undefined,
+): FieldSource | null {
+  if (fused.value === null) {
+    return null;
+  }
+  const id = ruleId ?? '';
+  if (ruleMatch === null) {
+    return { kind: 'llm' };
+  }
+  if (llmValue === null || llmValue === undefined) {
+    return { kind: 'rule', ruleId: id };
+  }
+  if (fused.conflict !== undefined) {
+    return { kind: 'flag', ruleId: id };
+  }
+  if (fused.value !== ruleMatch.value) {
+    return { kind: 'llm' };
+  }
+  const compare = policy?.compare ?? merge.defaultFieldPolicy.compare;
+  return compare(ruleMatch.value, llmValue)
+    ? { kind: 'agreement', ruleId: id }
+    : { kind: 'rule', ruleId: id };
 }
 
 /**
@@ -281,6 +338,7 @@ export const merge = {
       rulesResult,
       llmResult,
       options?.policy,
+      options?.policyByField,
       options?.logger,
     );
 
@@ -297,6 +355,7 @@ export const merge = {
     return {
       data: normalized,
       confidence: fusion.confidence,
+      sources: fusion.sources,
       conflicts: fusion.conflicts,
       missing: fusion.missing,
       validation: { valid, violations },

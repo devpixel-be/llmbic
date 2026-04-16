@@ -34,6 +34,12 @@ export type Normalizer<T> = (
 export type MergeApplyOptions<T> = {
   /** Overrides forwarded to every field-level fusion call. */
   policy?: Partial<FieldMergePolicy>;
+  /**
+   * Per-field policy overrides applied on top of `policy`. Precedence:
+   * library defaults < `policy` < `policyByField[field]`. Fields absent from
+   * the map fall back to `policy` alone.
+   */
+  policyByField?: { [K in keyof T]?: Partial<FieldMergePolicy> };
   /** Transformations run in declared order after the per-field fusion. */
   normalizers?: Normalizer<T>[];
   /** Invariants run on the normalized data; their violations populate `validation`. */
@@ -52,6 +58,26 @@ export type MergeApplyOptions<T> = {
  *   confidence.
  */
 export type ConflictStrategy = 'flag' | 'prefer-rule' | 'prefer-llm';
+
+/**
+ * Origin of the value kept for a field after fusion. Each variant carries the
+ * `ruleId` of the deterministic rule involved when applicable, so consumers
+ * can attribute extracted values back to the exact rule that produced them.
+ *
+ * - `'rule'`: only the rule produced a value, or the rule won under
+ *   `'prefer-rule'`.
+ * - `'llm'`: only the LLM produced a value, or the LLM won under
+ *   `'prefer-llm'`.
+ * - `'agreement'`: rule and LLM produced equivalent values per the policy's
+ *   `compare` callback. `ruleId` points to the rule that matched.
+ * - `'flag'`: rule and LLM disagreed under the `'flag'` strategy. The rule
+ *   value is kept; `ruleId` identifies the rule.
+ */
+export type FieldSource =
+  | { kind: 'rule'; ruleId: string }
+  | { kind: 'llm' }
+  | { kind: 'agreement'; ruleId: string }
+  | { kind: 'flag'; ruleId: string };
 
 /**
  * A disagreement between a rule match and an LLM value for the same field.
@@ -159,6 +185,12 @@ export type ExtractionResult<T> = {
   data: ExtractedData<T>;
   /** Confidence per field in `[0, 1]`, or `null` when the field is missing. */
   confidence: { [K in keyof T]: number | null };
+  /**
+   * Origin of the value kept for each field, or `null` for missing fields.
+   * Use it to attribute extractions back to the rule that produced them, to
+   * detect agreement between rules and LLM, or to spot flagged conflicts.
+   */
+  sources: { [K in keyof T]: FieldSource | null };
   /** Disagreements recorded by the `'flag'` strategy during per-field fusion. */
   conflicts: Conflict[];
   /** Fields for which no value could be produced. */

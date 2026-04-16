@@ -15,13 +15,17 @@ export const rule = {
    *
    * @param field - Name of the schema field the rule writes to.
    * @param extract - Callback that inspects the content and proposes a value.
+   * @param options - Optional rule metadata. `id` is surfaced in
+   *   `ExtractionResult.sources` when this rule produces the kept value;
+   *   defaults to `${field}#${declarationIndex}`.
    * @returns An {@link ExtractionRule} ready to be passed to {@link rule.apply}.
    */
   create(
     field: string,
     extract: (content: string) => RuleMatch<unknown> | null,
+    options?: { id?: string },
   ): ExtractionRule {
-    return { field, extract };
+    return options?.id !== undefined ? { id: options.id, field, extract } : { field, extract };
   },
 
   /**
@@ -41,18 +45,17 @@ export const rule = {
     pattern: RegExp,
     confidenceScore: number,
     transform?: (match: RegExpMatchArray) => T,
+    options?: { id?: string },
   ): ExtractionRule {
-    return {
-      field,
-      extract: (content) => {
-        const match = content.match(pattern);
-        if (!match) {
-          return null;
-        }
-        const value = transform ? transform(match) : (match[1] ?? match[0]);
-        return { value, confidence: confidenceScore };
-      },
+    const extract = (content: string): RuleMatch<unknown> | null => {
+      const match = content.match(pattern);
+      if (!match) {
+        return null;
+      }
+      const value = transform ? transform(match) : (match[1] ?? match[0]);
+      return { value, confidence: confidenceScore };
     };
+    return options?.id !== undefined ? { id: options.id, field, extract } : { field, extract };
   },
 
   /**
@@ -106,8 +109,10 @@ export const rule = {
     const schemaKeys = Object.keys(schema.shape) as (keyof Data)[];
     const values: Partial<Data> = {};
     const confidenceMap: Partial<Record<keyof Data, number>> = {};
+    const sourceIds: Partial<Record<keyof Data, string>> = {};
 
-    for (const candidate of rules) {
+    for (let index = 0; index < rules.length; index += 1) {
+      const candidate = rules[index]!;
       const field = candidate.field as keyof Data;
       if (!schemaKeys.includes(field)) {
         continue;
@@ -132,10 +137,11 @@ export const rule = {
       }
       values[field] = parsed.data as Data[keyof Data];
       confidenceMap[field] = match.confidence;
+      sourceIds[field] = candidate.id ?? `${candidate.field}#${index}`;
     }
 
     const missing = schemaKeys.filter((key) => !(key in values));
 
-    return { values, confidence: confidenceMap, missing };
+    return { values, confidence: confidenceMap, sourceIds, missing };
   },
 };

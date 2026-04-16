@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-16
+
+Non-breaking. Production-readiness pass: per-field provenance, per-field merge policy, and pre/post LLM transformers. Token / cost tracking deliberately stays out of scope - `LlmProvider` keeps observability as a caller concern; wrap your `complete` for telemetry.
+
+### Added
+
+- `ExtractionResult.sources` - per-field origin of the kept value, as a `FieldSource` discriminated union (`'rule' | 'llm' | 'agreement' | 'flag'`). Variants involving a rule carry the `ruleId` of the rule that produced the match. Use it to attribute extractions back to specific rules, monitor rule quality at scale, or filter results on agreement vs LLM-only fields.
+- `ExtractionRule.id` and `rule.create` / `rule.regex` `options.id` - declare a stable identifier surfaced in `ExtractionResult.sources`. When omitted, `rule.apply` auto-generates `${field}#${declarationIndex}` based on the rule's position in the array.
+- `MergeApplyOptions.policyByField` and `ExtractorConfig.policyByField` - per-field overrides of `FieldMergePolicy` (strategy, confidences, compare). Precedence: defaults < `policy` < `policyByField[field]`. TypeScript validates field names against the schema. Lets a single extractor flag conflicts on critical fields, prefer rules on parser-friendly fields, and prefer the LLM on free-form fields without writing custom merge code.
+- `ExtractorLlmConfig.transformRequest` / `transformResponse` - async hooks called around `provider.complete`. `transformRequest` rewrites the built `LlmRequest` (PII redaction, locale tagging); `transformResponse` rewrites the parsed `LlmResult` before the merge step (PII restoration, post-processing). Errors propagate, no implicit catch.
+- `examples/pii-redaction.ts` - runnable, offline demo of the redact-then-restore pattern using `transformRequest` + `transformResponse` (also wired as `npm run example:pii-redaction`).
+
+### Public types
+
+- `FieldSource` exported from the package root.
+- `RulesResult.sourceIds` (optional) - populated by `rule.apply`, consumed by `merge.apply` to compute `ExtractionResult.sources`. External callers building `RulesResult` by hand can omit it; provenance simply falls back to an empty `ruleId`.
+- `ExtractionRule` gains optional `id`. `RuleMatch`, `FieldMergeResult` and `merge.field`'s signature are unchanged - provenance is computed from the merge outcome plus the policy, not stored on the per-field primitive.
+
 ## [1.1.0] - 2026-04-16
 
 Non-breaking. Unblocks hybrid workflows that rely on nested schemas, agreement/conflict detection, and extractor-level merge options.

@@ -1,6 +1,6 @@
 {
   "name": "llmbic",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Hybrid data extraction — deterministic rules + LLM fallback, with per-field confidence scoring.",
   "type": "module",
   "license": "MIT",
@@ -30,6 +30,7 @@
     "typecheck": "tsc --noEmit",
     "example:ollama": "tsx examples/ollama.ts",
     "example:openai-batch": "tsx examples/openai-batch.ts",
+    "example:pii-redaction": "tsx examples/pii-redaction.ts",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "peerDependencies": {

@@ -192,6 +192,28 @@ Every field in the result carries a confidence score (0.0–1.0):
 | Rule + LLM disagree | 0.3 (flagged as conflict) |
 | No source | `null` |
 
+### Per-field provenance
+
+Alongside `confidence`, every field carries a `source` describing where the kept value came from. Useful for attributing extractions back to the rule that produced them, monitoring rule quality at scale, or filtering on agreement vs LLM-only fields:
+
+```typescript
+result.sources;
+// {
+//   total:    { kind: 'agreement', ruleId: 'total-eur' },  // rule + LLM agreed
+//   currency: { kind: 'rule',      ruleId: 'currency#1' }, // only the rule produced a value
+//   vendor:   { kind: 'llm' },                              // only the LLM produced a value
+//   date:     { kind: 'flag',      ruleId: 'date-iso' },   // rule and LLM disagreed under flag strategy
+//   notes:    null,                                         // missing
+// }
+```
+
+`ruleId` defaults to `${field}#${declarationIndex}` based on the rule's position in the array - stable as long as you don't reorder. For long-lived production code, declare ids explicitly so refactors don't break observability:
+
+```typescript
+rule.create('total', extractTotal, { id: 'total-eur' });
+rule.regex('date', /(\d{4}-\d{2}-\d{2})/, 0.95, undefined, { id: 'date-iso' });
+```
+
 ### Conflict detection
 
 When a rule and the LLM extract different values for the same field, Llmbic flags it:
@@ -204,6 +226,24 @@ result.conflicts;
 Three conflict strategies: `'flag'` (default — keep rule value, record conflict), `'prefer-rule'`, or `'prefer-llm'`.
 
 In the default `'fill-gaps'` mode the LLM is only asked about fields the rules could not resolve, so conflicts are impossible. To actually trigger conflict detection, opt into cross-check (see below).
+
+#### Per-field strategies
+
+`policy` is a single strategy applied to every field. When fields have different criticality (a `price` you want to flag vs a `postal_code` your regex always nails vs a free-form `description` you'd rather defer to the LLM), use `policyByField` to override per field. Precedence: library defaults < `policy` < `policyByField[field]`.
+
+```typescript
+const extractor = createExtractor({
+  schema: ListingSchema,
+  rules: [...],
+  policy: { strategy: 'flag' },          // default for every field
+  policyByField: {
+    postal_code: { strategy: 'prefer-rule' },
+    description: { strategy: 'prefer-llm' },
+  },
+});
+```
+
+You can override any subset of `FieldMergePolicy` per field - strategy, confidences, even the `compare` callback (e.g. fuzzy equality for free-form strings). TypeScript validates field names against your schema, so typos surface at compile time.
 
 ### Cross-check mode
 
@@ -272,6 +312,30 @@ result.validation;
 // { valid: true, violations: [] }
 // or { valid: false, violations: [{ field: 'price', rule: 'price_positive', message: '...', severity: 'error' }] }
 ```
+
+### Request / response transformers
+
+Two optional hooks let you intercept the LLM exchange without wrapping the provider yourself: `transformRequest` runs after `prompt.build` and before `provider.complete`; `transformResponse` runs after `prompt.parse` and before the merge. Both can be async; errors propagate.
+
+```typescript
+const extractor = createExtractor({
+  schema: ContactSchema,
+  rules: [...],
+  llm: {
+    provider,
+    transformRequest: (request, content) => ({
+      ...request,
+      systemPrompt: `Language: ${detectLocale(content)}\n${request.systemPrompt}`,
+    }),
+  },
+});
+```
+
+Common patterns:
+
+- **PII redaction (RGPD)**: replace emails / phones / IDs with placeholders in `userContent`, stash the originals in `knownValues` under a private key, restore them in `transformResponse`. Worked example: [`examples/pii-redaction.ts`](./examples/pii-redaction.ts).
+- **Locale tagging**: prepend `Language: ...` to `systemPrompt` after caller-side detection.
+- **Caching**: wrap your `LlmProvider.complete` directly - cleaner than short-circuiting in a hook, since it sits at the actual transport boundary.
 
 ## Writing a provider
 
@@ -383,7 +447,8 @@ Creates an extractor instance. Config:
 | `llm` | `ExtractorLlmConfig` | no | LLM fallback. Omit for rules-only mode. See below. |
 | `normalizers` | `Normalizer<T>[]` | no | Post-merge transformations, run in declared order. |
 | `validators` | `Validator<ExtractedData<T>>[]` | no | Invariants populating `result.validation`. |
-| `policy` | `Partial<FieldMergePolicy>` | no | Overrides the per-field merge policy (conflict strategy, confidence defaults, equality). |
+| `policy` | `Partial<FieldMergePolicy>` | no | Overrides the per-field merge policy (conflict strategy, confidence defaults, equality) for every field. |
+| `policyByField` | `{ [K in keyof T]?: Partial<FieldMergePolicy> }` | no | Per-field overrides applied on top of `policy`. Precedence: defaults < `policy` < `policyByField[field]`. |
 | `logger` | `Logger` | no | Pino/Winston/console-compatible. Warnings from `rule.apply` and `merge.apply` flow through. |
 
 `ExtractorLlmConfig`:
@@ -394,13 +459,15 @@ Creates an extractor instance. Config:
 | `systemPrompt` | `string` | no | Overrides the built-in system prompt. |
 | `mode` | `'fill-gaps' \| 'cross-check'` | no | `'fill-gaps'` (default) asks the LLM only about fields the rules did not resolve. `'cross-check'` asks about every schema field so `merge.apply` can surface agreements / conflicts. |
 | `crossCheckHints` | `'bias' \| 'unbiased'` | no | In cross-check mode only. `'unbiased'` (default) hides rule values from the LLM for genuine disagreement detection; `'bias'` re-exposes them to save tokens. |
+| `transformRequest` | `(request, content) => LlmRequest \| Promise<LlmRequest>` | no | Hook called with the built request before `provider.complete`. PII redaction, locale tagging, etc. |
+| `transformResponse` | `(result, request) => LlmResult \| Promise<LlmResult>` | no | Hook called with the parsed LLM result before the merge. PII restoration, post-processing, etc. |
 
 ### `rule` namespace
 
 | Member | Signature | Description |
 |---|---|---|
-| `rule.create` | `(field, extract) => ExtractionRule` | Declare a rule. `extract(content)` returns a `RuleMatch` or `null`. |
-| `rule.regex` | `(field, pattern, score, transform?) => ExtractionRule` | Regex-based rule. On match, capture group 1 (or the full match) is fed to `transform`. |
+| `rule.create` | `(field, extract, options?) => ExtractionRule` | Declare a rule. `extract(content)` returns a `RuleMatch` or `null`. `options.id` sets the stable identifier surfaced in `result.sources`. |
+| `rule.regex` | `(field, pattern, score, transform?, options?) => ExtractionRule` | Regex-based rule. On match, capture group 1 (or the full match) is fed to `transform`. `options.id` sets the stable identifier surfaced in `result.sources`. |
 | `rule.confidence` | `(value, score) => RuleMatch` | Wrap a value and a confidence score; sugar for custom `extract` callbacks. |
 | `rule.apply` | `(content, rules, schema, logger?) => RulesResult` | Run every rule, pick the highest-confidence match per field, type-check against the schema. |
 

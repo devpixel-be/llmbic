@@ -18,6 +18,7 @@ function rulesResultFromPartial<T>(
 ): RulesResult<T> {
   const values: Partial<T> = {};
   const confidence: Partial<Record<keyof T, number>> = {};
+  const sourceIds: Partial<Record<keyof T, string>> = {};
   for (const field of allFields) {
     const value = partial.data[field];
     if (value === null) {
@@ -28,8 +29,12 @@ function rulesResultFromPartial<T>(
     if (fieldConfidence !== null) {
       confidence[field] = fieldConfidence;
     }
+    const source = partial.sources[field];
+    if (source !== null && 'ruleId' in source) {
+      sourceIds[field] = source.ruleId;
+    }
   }
-  return { values, confidence, missing: [...partial.missing] };
+  return { values, confidence, sourceIds, missing: [...partial.missing] };
 }
 
 /**
@@ -87,6 +92,7 @@ export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
 
   const mergeOptions: MergeApplyOptions<Data> = {
     policy: config.policy,
+    policyByField: config.policyByField,
     normalizers: config.normalizers,
     validators: config.validators,
     logger: config.logger,
@@ -105,15 +111,21 @@ export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
         return stampDuration(partial, startedAt);
       }
 
-      const request = prompt.build(config.schema, partial, content, buildOptions);
+      const builtRequest = prompt.build(config.schema, partial, content, buildOptions);
+      const request = config.llm!.transformRequest
+        ? await config.llm!.transformRequest(builtRequest, content)
+        : builtRequest;
       const completion = await config.llm!.provider.complete(request);
       const llmTargetFields =
         buildOptions.mode === 'cross-check' ? allFields : partial.missing;
-      const llmResult = prompt.parse(
+      const parsedLlmResult = prompt.parse(
         config.schema,
         llmTargetFields,
         completion.values,
       );
+      const llmResult = config.llm!.transformResponse
+        ? await config.llm!.transformResponse(parsedLlmResult, request)
+        : parsedLlmResult;
       const final = merge.apply(config.schema, rulesResult, llmResult, content, mergeOptions);
       return stampDuration(final, startedAt);
     },

@@ -34,6 +34,29 @@ export type ExtractorLlmConfig = {
    * Ignored when `mode !== 'cross-check'`.
    */
   crossCheckHints?: CrossCheckHints;
+  /**
+   * Hook called with the fully-built {@link LlmRequest} just before
+   * `provider.complete`. Return the request to send. Useful for PII
+   * redaction (replace emails / phones / IDs in `userContent`), locale
+   * tagging (prepend `Language: ...` to `systemPrompt`), or any caller-side
+   * pre-processing. The original `content` is forwarded so the hook can
+   * cross-reference it. May be asynchronous; errors propagate to `extract`.
+   */
+  transformRequest?: (
+    request: LlmRequest,
+    content: string,
+  ) => LlmRequest | Promise<LlmRequest>;
+  /**
+   * Hook called with the parsed {@link LlmResult} just after
+   * `provider.complete`. Return the result the merge step should use. Useful
+   * for restoring PII-redacted values, applying caller-side post-processing,
+   * or stripping unsafe content. Receives the (possibly transformed) request
+   * for context. May be asynchronous; errors propagate to `extract`.
+   */
+  transformResponse?: (
+    result: LlmResult,
+    request: LlmRequest,
+  ) => LlmResult | Promise<LlmResult>;
 };
 
 /**
@@ -56,6 +79,12 @@ export type ExtractorConfig<S extends z.ZodObject<z.ZodRawShape>> = {
   validators?: Validator<ExtractedData<z.infer<S>>>[];
   /** Overrides for the per-field merge policy (conflict strategy, confidences, compare). */
   policy?: Partial<FieldMergePolicy>;
+  /**
+   * Per-field policy overrides applied on top of `policy`. Precedence:
+   * library defaults < `policy` < `policyByField[field]`. Forwarded to every
+   * internal `merge.apply` call.
+   */
+  policyByField?: { [K in keyof z.infer<S>]?: Partial<FieldMergePolicy> };
   /** Logger propagated through the merge pipeline for warnings and fallbacks. */
   logger?: Logger;
 };
