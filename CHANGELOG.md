@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-16
+
+Non-breaking. Unblocks hybrid workflows that rely on nested schemas, agreement/conflict detection, and extractor-level merge options.
+
+### Added
+
+- `prompt.build` now supports `z.array(...)`, `z.object(...)`, `z.optional(...)` and `z.default(...)` in the response JSON Schema. Optional fields are preserved in `properties` but excluded from `required`.
+- Cross-check mode on `prompt.build` and `ExtractorLlmConfig`: `mode: 'cross-check'` asks the LLM about every schema field, not just `partial.missing`, enabling the per-field agreement / conflict machinery in `merge.apply`. `crossCheckHints: 'bias' | 'unbiased'` (default `unbiased`) controls whether rule values are surfaced to the LLM as hints.
+- `ExtractorConfig` now accepts `normalizers`, `validators`, `policy` and `logger` directly; previously these had to be threaded into a manual `merge.apply` call. The options are forwarded to every internal merge, so `extract`, `extractSync` and `extractor.merge` all honor them.
+- Zod `.describe("...")` (equivalent to `.meta({ description })`) is now propagated to the generated JSON Schema at the level it was declared; providers' structured-output features consume it natively, so per-field prompt guidance no longer requires an expanded system prompt.
+- README "Batch / async mode" section expanded with a worked OpenAI Batch API example (JSONL shape, upload / poll / download / merge), plus a full runnable script at `examples/openai-batch.ts`.
+
+### Fixed
+
+- Object schemas emitted by `prompt.build` now carry `additionalProperties: false`, matching the requirement of OpenAI Chat Completions Structured Outputs with `strict: true`. Other providers (Anthropic tool use, Ollama JSON Schema) ignore the extra key. Aligned with `prompt.parse` which already drops unexpected fields with a warning.
+- `createExtractor` was not forwarding the configured `logger` to `rule.apply`, so schema-rejection warnings from the rules pass were silently dropped. The logger is now plumbed through every phase.
+
+### Public types
+
+- `PromptBuildMode`, `CrossCheckHints`, `PromptBuildOptions` exported from the package root.
+- `ExtractorConfig<S>` gains optional `normalizers`, `validators`, `policy`, `logger`.
+- `ExtractorLlmConfig` gains optional `mode`, `crossCheckHints`.
+
 ## [1.0.0] — 2026-04-15
 
 Initial public release.

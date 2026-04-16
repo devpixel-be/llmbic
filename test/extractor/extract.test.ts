@@ -33,6 +33,75 @@ describe('createExtractor.extract — rules-only mode', () => {
   });
 });
 
+describe('createExtractor.extract: cross-check mode', () => {
+  it('always calls the LLM, even when the rules resolved every field', async () => {
+    const nameRule = rule.regex('name', /^(\w+),/, 0.9);
+    const ageRule = rule.regex('age', /(\d+)\s*years/, 0.8, (match) => Number(match[1]));
+    const roleRule = rule.regex('role', /(\w+\s+engineer)\./, 0.9);
+
+    let capturedRequest: LlmRequest | undefined;
+    const provider: LlmProvider = {
+      async complete(request) {
+        capturedRequest = request;
+        return { values: { name: 'Ada', age: 30, role: 'senior engineer' } };
+      },
+    };
+
+    const extractor = createExtractor({
+      schema: personSchema,
+      rules: [nameRule, ageRule, roleRule],
+      llm: { provider, mode: 'cross-check' },
+    });
+
+    const result = await extractor.extract('Ada, 30 years old, senior engineer.');
+
+    expect(result.meta.llmCalled).toBe(true);
+    expect(capturedRequest?.responseSchema).toEqual({
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        age: { type: 'number' },
+        role: { type: 'string' },
+      },
+      required: ['name', 'age', 'role'],
+      additionalProperties: false,
+    });
+    expect(capturedRequest?.knownValues).toEqual({});
+  });
+
+  it('records a conflict when rules and LLM disagree on a resolved field', async () => {
+    const priceSchema = z.object({
+      orderNumber: z.string(),
+      price: z.number(),
+    });
+    const priceRules = [
+      rule.regex('orderNumber', /Order\s+(\S+)/, 0.95),
+      rule.regex('price', /price:\s*(\d+)/, 0.9, (match) => Number(match[1])),
+    ];
+    const provider: LlmProvider = {
+      async complete() {
+        return { values: { orderNumber: 'X-1', price: 200 } };
+      },
+    };
+
+    const extractor = createExtractor({
+      schema: priceSchema,
+      rules: priceRules,
+      llm: { provider, mode: 'cross-check' },
+    });
+
+    const result = await extractor.extract('Order X-1 - price: 100');
+
+    expect(result.meta.llmCalled).toBe(true);
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({
+      field: 'price',
+      ruleValue: 100,
+      llmValue: 200,
+    });
+  });
+});
+
 describe('createExtractor.extract — full mode with LLM fallback', () => {
   it('asks the provider for missing fields only, parses its response, and returns complete data', async () => {
     let capturedRequest: LlmRequest | undefined;
@@ -57,6 +126,7 @@ describe('createExtractor.extract — full mode with LLM fallback', () => {
       type: 'object',
       properties: { role: { type: 'string' } },
       required: ['role'],
+      additionalProperties: false,
     });
     expect(result.data).toEqual({ name: 'Ada', age: 30, role: 'senior engineer' });
     expect(result.missing).toEqual([]);

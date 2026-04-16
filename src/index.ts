@@ -28,7 +28,12 @@ export type {
   ExtractorLlmConfig,
 } from './types/extractor.types.js';
 
-export type { LlmRequest } from './types/prompt.types.js';
+export type {
+  CrossCheckHints,
+  LlmRequest,
+  PromptBuildMode,
+  PromptBuildOptions,
+} from './types/prompt.types.js';
 export type { LlmProvider } from './types/provider.types.js';
 export type { Logger } from './types/logger.types.js';
 

@@ -1,8 +1,16 @@
 import type { z } from 'zod';
 import type { ExtractionRule } from './rule.types.js';
-import type { ExtractionResult, LlmResult } from './merge.types.js';
+import type {
+  ExtractedData,
+  ExtractionResult,
+  FieldMergePolicy,
+  LlmResult,
+  Normalizer,
+} from './merge.types.js';
 import type { LlmProvider } from './provider.types.js';
-import type { LlmRequest } from './prompt.types.js';
+import type { Logger } from './logger.types.js';
+import type { Validator } from './validate.types.js';
+import type { CrossCheckHints, LlmRequest, PromptBuildMode } from './prompt.types.js';
 
 /**
  * LLM-fallback section of {@link ExtractorConfig}. When present, the
@@ -14,6 +22,18 @@ export type ExtractorLlmConfig = {
   provider: LlmProvider;
   /** Optional override for {@link LlmRequest.systemPrompt}; defaults to the {@link prompt.build} built-in. */
   systemPrompt?: string;
+  /**
+   * Field-selection strategy passed to {@link prompt.build}. In
+   * `'cross-check'` mode the extractor always calls the LLM (even when the
+   * rules resolved every field) so the merge step can surface agreements or
+   * conflicts. Defaults to `'fill-gaps'`.
+   */
+  mode?: PromptBuildMode;
+  /**
+   * Hint-exposure policy for cross-check mode. Defaults to `'unbiased'`.
+   * Ignored when `mode !== 'cross-check'`.
+   */
+  crossCheckHints?: CrossCheckHints;
 };
 
 /**
@@ -30,6 +50,14 @@ export type ExtractorConfig<S extends z.ZodObject<z.ZodRawShape>> = {
   rules: ExtractionRule[];
   /** Optional LLM fallback invoked for fields the rules could not produce. */
   llm?: ExtractorLlmConfig;
+  /** Post-merge transformations, forwarded to every `merge.apply` call. */
+  normalizers?: Normalizer<z.infer<S>>[];
+  /** Invariants checked on the normalized data; populate `result.validation`. */
+  validators?: Validator<ExtractedData<z.infer<S>>>[];
+  /** Overrides for the per-field merge policy (conflict strategy, confidences, compare). */
+  policy?: Partial<FieldMergePolicy>;
+  /** Logger propagated through the merge pipeline for warnings and fallbacks. */
+  logger?: Logger;
 };
 
 /**
@@ -53,8 +81,11 @@ export type Extractor<T> = {
    */
   extractSync(content: string): ExtractionResult<T>;
   /**
-   * Build the LLM request for the fields still missing in `partial`.
-   * Delegates to {@link prompt.build} with the bound schema.
+   * Build the LLM request for `partial`. The target field set depends on the
+   * configured `llm.mode`: `'fill-gaps'` (default) covers only
+   * `partial.missing`; `'cross-check'` covers every schema field. Delegates
+   * to {@link prompt.build} with the bound schema and the configured
+   * `systemPrompt` / `crossCheckHints`.
    */
   prompt(content: string, partial: ExtractionResult<T>): LlmRequest;
   /**

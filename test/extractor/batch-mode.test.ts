@@ -30,6 +30,7 @@ describe('createExtractor — batch-mode sync methods', () => {
       type: 'object',
       properties: { role: { type: 'string' } },
       required: ['role'],
+      additionalProperties: false,
     });
 
     const llmResult = extractor.parse('{"role": "senior engineer"}');

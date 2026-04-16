@@ -3,7 +3,7 @@ import { rule } from './rules.js';
 import { merge } from './merge.js';
 import { prompt } from './prompt.js';
 import type { Extractor, ExtractorConfig } from './types/extractor.types.js';
-import type { ExtractionResult } from './types/merge.types.js';
+import type { ExtractionResult, MergeApplyOptions } from './types/merge.types.js';
 import type { RulesResult } from './types/rule.types.js';
 
 /**
@@ -49,18 +49,24 @@ function stampDuration<T>(
 }
 
 /**
- * Bind a schema, deterministic rules and an optional LLM fallback into an
+ * Bind a schema, deterministic rules and their merge-time options into an
  * {@link Extractor}. The returned object exposes the extraction pipeline as
  * pre-configured methods; call sites stop having to thread `schema`,
- * `rules` and provider wiring through every step.
+ * `rules`, `policy`, normalizers/validators and provider wiring through
+ * every step.
  *
- * {@link Extractor.extract} runs {@link rule.apply}, then — when an LLM is
- * configured and some fields are still missing — asks the provider for those
- * fields only, parses the response with {@link prompt.parse} and fuses
- * everything through {@link merge.apply}.
+ * {@link Extractor.extract} runs {@link rule.apply}, then - when an LLM is
+ * configured - asks the provider either for the missing fields only
+ * (`mode: 'fill-gaps'`, default) or for every schema field
+ * (`mode: 'cross-check'`, which always triggers the LLM call so conflicts
+ * can be detected even when the rules resolved every field). The response
+ * is parsed with {@link prompt.parse} and fused through {@link merge.apply}.
  *
  * @typeParam S - A Zod object schema describing the target data shape.
- * @param config - Schema, deterministic rules, and optional LLM fallback.
+ * @param config - Schema, deterministic rules, and optional LLM fallback,
+ *   plus `policy`, `normalizers`, `validators` and `logger` forwarded to
+ *   every internal {@link merge.apply} call. The logger is also forwarded
+ *   to {@link rule.apply} so schema-rejection warnings stay visible.
  * @returns An {@link Extractor} bound to `config.schema`.
  */
 export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
@@ -73,40 +79,54 @@ export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
     throw new Error('createExtractor: schema must declare at least one field');
   }
 
+  const buildOptions = {
+    systemPrompt: config.llm?.systemPrompt,
+    mode: config.llm?.mode ?? 'fill-gaps',
+    crossCheckHints: config.llm?.crossCheckHints ?? 'unbiased',
+  } as const;
+
+  const mergeOptions: MergeApplyOptions<Data> = {
+    policy: config.policy,
+    normalizers: config.normalizers,
+    validators: config.validators,
+    logger: config.logger,
+  };
+
   return {
     async extract(content) {
       const startedAt = performance.now();
-      const rulesResult = rule.apply(content, config.rules, config.schema);
-      const partial = merge.apply(config.schema, rulesResult, null, content);
+      const rulesResult = rule.apply(content, config.rules, config.schema, config.logger);
+      const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions);
 
-      if (!config.llm || partial.missing.length === 0) {
+      const shouldCallLlm =
+        config.llm !== undefined &&
+        (buildOptions.mode === 'cross-check' || partial.missing.length > 0);
+      if (!shouldCallLlm) {
         return stampDuration(partial, startedAt);
       }
 
-      const request = prompt.build(config.schema, partial, content, {
-        systemPrompt: config.llm.systemPrompt,
-      });
-      const completion = await config.llm.provider.complete(request);
+      const request = prompt.build(config.schema, partial, content, buildOptions);
+      const completion = await config.llm!.provider.complete(request);
+      const llmTargetFields =
+        buildOptions.mode === 'cross-check' ? allFields : partial.missing;
       const llmResult = prompt.parse(
         config.schema,
-        partial.missing,
+        llmTargetFields,
         completion.values,
       );
-      const final = merge.apply(config.schema, rulesResult, llmResult, content);
+      const final = merge.apply(config.schema, rulesResult, llmResult, content, mergeOptions);
       return stampDuration(final, startedAt);
     },
 
     extractSync(content) {
       const startedAt = performance.now();
-      const rulesResult = rule.apply(content, config.rules, config.schema);
-      const partial = merge.apply(config.schema, rulesResult, null, content);
+      const rulesResult = rule.apply(content, config.rules, config.schema, config.logger);
+      const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions);
       return stampDuration(partial, startedAt);
     },
 
     prompt(content, partial) {
-      return prompt.build(config.schema, partial, content, {
-        systemPrompt: config.llm?.systemPrompt,
-      });
+      return prompt.build(config.schema, partial, content, buildOptions);
     },
 
     parse(raw) {
@@ -116,7 +136,7 @@ export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
     merge(partial, llmResult, content) {
       const startedAt = performance.now();
       const rulesResult = rulesResultFromPartial(partial, allFields);
-      const result = merge.apply(config.schema, rulesResult, llmResult, content);
+      const result = merge.apply(config.schema, rulesResult, llmResult, content, mergeOptions);
       return stampDuration(result, startedAt);
     },
   };

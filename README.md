@@ -29,7 +29,7 @@ Llmbic has a single dependency: [Zod](https://zod.dev). No vendor SDK is pulled 
 
 ```typescript
 import { z } from 'zod';
-import { createExtractor, rule, confidence } from 'llmbic';
+import { createExtractor, rule } from 'llmbic';
 
 const InvoiceSchema = z.object({
   total: z.number().nullable(),
@@ -41,14 +41,14 @@ const InvoiceSchema = z.object({
 const extractor = createExtractor({
   schema: InvoiceSchema,
   rules: [
-    rule('total', (text) => {
+    rule.create('total', (text) => {
       const m = text.match(/Total[:\s]*(\d[\d.,\s]+)\s*€/i);
       if (!m) return null;
-      return confidence(parseFloat(m[1].replace(/[\s.]/g, '').replace(',', '.')), 1.0);
+      return rule.confidence(parseFloat(m[1].replace(/[\s.]/g, '').replace(',', '.')), 1.0);
     }),
-    rule('currency', (text) => {
-      if (/€|EUR/i.test(text)) return confidence('EUR', 1.0);
-      if (/\$|USD/i.test(text)) return confidence('USD', 1.0);
+    rule.create('currency', (text) => {
+      if (/€|EUR/i.test(text)) return rule.confidence('EUR', 1.0);
+      if (/\$|USD/i.test(text)) return rule.confidence('USD', 1.0);
       return null;
     }),
   ],
@@ -69,7 +69,7 @@ console.log(result.missing);
 ### Rules + LLM
 
 ```typescript
-import { createExtractor, rule, confidence } from 'llmbic';
+import { createExtractor, rule } from 'llmbic';
 import type { LlmProvider } from 'llmbic';
 import OpenAI from 'openai';
 
@@ -135,6 +135,48 @@ const llmResult = extractor.parse(rawJsonResponse);
 const result = extractor.merge(partial, llmResult, markdown);
 ```
 
+Steps 1, 2 and 4 are pure and synchronous: persist `partial` between (2) and (4); the merge re-runs the rules internally so no private state leaks across the async gap.
+
+#### Worked example: OpenAI Batch API
+
+The Batch API expects a JSONL file where each line is a Chat Completions request. Using `extractor.prompt(...)` as the per-document payload builder maps 1:1 onto that format:
+
+```typescript
+// For each document, build one JSONL line:
+const partial = extractor.extractSync(doc.markdown);
+const request = extractor.prompt(doc.markdown, partial);
+
+const line = JSON.stringify({
+  custom_id: doc.id,                         // how you'll re-match later
+  method: 'POST',
+  url: '/v1/chat/completions',
+  body: {
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: request.systemPrompt },
+      { role: 'user',   content: request.userContent },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: 'extraction', strict: true, schema: request.responseSchema },
+    },
+  },
+});
+```
+
+Upload the JSONL, create the batch, poll until `status === 'completed'`, download the output file. Each output line carries the same `custom_id` so you can map back to the `partial` you kept in memory (or in Redis, or on disk):
+
+```typescript
+for (const entry of prepared) {
+  const raw = responsesById.get(entry.id);           // from output JSONL
+  const llmResult = extractor.parse(raw);
+  const result = extractor.merge(entry.partial, llmResult, entry.markdown);
+  // ... persist result ...
+}
+```
+
+End-to-end runnable example (upload + poll + download + merge): [`examples/openai-batch.ts`](./examples/openai-batch.ts). At current OpenAI pricing the Batch API is ~50% cheaper than realtime Chat Completions, with a 24h completion window.
+
 ## Features
 
 ### Per-field confidence scoring
@@ -161,6 +203,35 @@ result.conflicts;
 
 Three conflict strategies: `'flag'` (default — keep rule value, record conflict), `'prefer-rule'`, or `'prefer-llm'`.
 
+In the default `'fill-gaps'` mode the LLM is only asked about fields the rules could not resolve, so conflicts are impossible. To actually trigger conflict detection, opt into cross-check (see below).
+
+### Cross-check mode
+
+Switch the LLM call from fill-gaps (ask only about missing fields) to cross-check (ask about every schema field, whether the rules resolved it or not):
+
+```typescript
+const extractor = createExtractor({
+  schema: InvoiceSchema,
+  rules: [...],
+  llm: {
+    provider,
+    mode: 'cross-check',
+    crossCheckHints: 'unbiased', // default; hides rule values from the LLM
+  },
+});
+```
+
+The merge step now sees two candidates per field and surfaces real disagreements through `result.conflicts`. `crossCheckHints: 'bias'` re-exposes the rule values as hints to save tokens, at the cost of confirmation bias (the LLM tends to agree with what it was shown).
+
+### Rich schemas
+
+The JSON Schema handed to the LLM supports the Zod constructs that show up in real-world extraction targets:
+
+- Primitives: `z.string()`, `z.number()`, `z.boolean()`, `z.enum([...])`.
+- Composition: `z.array(...)`, `z.object({...})`, nested arbitrarily.
+- Wrappers: `.nullable()`, `.optional()`, `.default(...)`.
+- Descriptions: `z.string().describe("price in EUR, tax included")` propagates to the JSON Schema `description` at the declared level (array root vs items, object root vs property), and providers' structured-output features consume it natively. No need to inflate the system prompt with per-field hints.
+
 ### Normalizers
 
 Post-merge transformations. Run in sequence, receive the merged data + original content:
@@ -184,9 +255,9 @@ const extractor = createExtractor({
 Check the final output for logical consistency:
 
 ```typescript
-import { validators } from 'llmbic';
+import { validator } from 'llmbic';
 
-const { field, crossField } = validators<MySchemaShape>();
+const { field, crossField } = validator.of<MySchemaShape>();
 
 const extractor = createExtractor({
   schema: MySchema,
@@ -227,7 +298,7 @@ const provider: LlmProvider = {
 
 Ready-made snippets for common backends:
 
-**OpenAI** (Chat Completions + Structured Outputs):
+**OpenAI** (Chat Completions + Structured Outputs). The response schema llmbic emits always carries `additionalProperties: false`, so `strict: true` works out of the box:
 
 ```typescript
 const client = new OpenAI();
@@ -307,28 +378,38 @@ Creates an extractor instance. Config:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `schema` | `ZodObject` | yes | Output schema |
-| `rules` | `ExtractionRule[]` | yes | Deterministic extraction rules |
-| `llm` | `{ provider, systemPrompt, defaultConfidence? }` | no | LLM configuration. Omit for rules-only mode. |
-| `normalizers` | `Normalizer[]` | no | Post-merge transformations |
-| `validators` | `Validator[]` | no | Output invariants |
-| `conflictStrategy` | `'flag' \| 'prefer-rule' \| 'prefer-llm'` | no | Default: `'flag'` |
-| `logger` | `Logger` | no | Injectable logger (compatible with Pino, Winston, console) |
+| `schema` | `ZodObject` | yes | Output schema (drives field enumeration and re-validation). |
+| `rules` | `ExtractionRule[]` | yes | Deterministic extraction rules. |
+| `llm` | `ExtractorLlmConfig` | no | LLM fallback. Omit for rules-only mode. See below. |
+| `normalizers` | `Normalizer<T>[]` | no | Post-merge transformations, run in declared order. |
+| `validators` | `Validator<ExtractedData<T>>[]` | no | Invariants populating `result.validation`. |
+| `policy` | `Partial<FieldMergePolicy>` | no | Overrides the per-field merge policy (conflict strategy, confidence defaults, equality). |
+| `logger` | `Logger` | no | Pino/Winston/console-compatible. Warnings from `rule.apply` and `merge.apply` flow through. |
 
-### `rule(field, extractFn)`
+`ExtractorLlmConfig`:
 
-Factory to create an `ExtractionRule`.
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | `LlmProvider` | yes | Single-method adapter the extractor calls. |
+| `systemPrompt` | `string` | no | Overrides the built-in system prompt. |
+| `mode` | `'fill-gaps' \| 'cross-check'` | no | `'fill-gaps'` (default) asks the LLM only about fields the rules did not resolve. `'cross-check'` asks about every schema field so `merge.apply` can surface agreements / conflicts. |
+| `crossCheckHints` | `'bias' \| 'unbiased'` | no | In cross-check mode only. `'unbiased'` (default) hides rule values from the LLM for genuine disagreement detection; `'bias'` re-exposes them to save tokens. |
 
-### `confidence(value, score)`
+### `rule` namespace
 
-Factory to create a `RuleMatch` with a confidence score.
+| Member | Signature | Description |
+|---|---|---|
+| `rule.create` | `(field, extract) => ExtractionRule` | Declare a rule. `extract(content)` returns a `RuleMatch` or `null`. |
+| `rule.regex` | `(field, pattern, score, transform?) => ExtractionRule` | Regex-based rule. On match, capture group 1 (or the full match) is fed to `transform`. |
+| `rule.confidence` | `(value, score) => RuleMatch` | Wrap a value and a confidence score; sugar for custom `extract` callbacks. |
+| `rule.apply` | `(content, rules, schema, logger?) => RulesResult` | Run every rule, pick the highest-confidence match per field, type-check against the schema. |
 
-### `validators<T>()`
+### `validator.of<T>()`
 
-Factory bound to the data shape `T`. Returns `{ field, crossField }`:
+Binds a target data shape `T` and returns two validator builders:
 
-- `field(name, rule, checkFn, message, severity?)` — single-field validator. `checkFn` receives the precise type of the field (`T[name]`).
-- `crossField(rule, checkFn, message, severity?)` — whole-object validator, produces a violation without a `field` property.
+- `field(name, ruleName, check, message, severity?)`: single-field validator. `check(value, data)` receives the precise type of the field (`T[name]`) as first argument.
+- `crossField(ruleName, check, message, severity?)`: whole-object validator, produces a violation without a `field` property.
 
 Binding `T` once lets TypeScript infer each field's type from the field name, so predicates are fully typed without manual annotations.
 
@@ -336,10 +417,10 @@ Binding `T` once lets TypeScript infer each field's type from the field name, so
 
 | Method | Sync | Description |
 |--------|------|-------------|
-| `extract(content)` | async | Full pipeline: rules → LLM → merge → validate |
-| `extractSync(content)` | sync | Rules only. Returns partial result + missing fields. |
-| `prompt(content, partial)` | sync | Builds LLM prompt for missing fields only. |
-| `parse(raw)` | sync | Parses raw LLM JSON response. |
+| `extract(content)` | async | Full pipeline: rules -> LLM (if configured) -> merge -> normalize -> validate. |
+| `extractSync(content)` | sync | Rules only. Returns the partial result + `missing` fields. |
+| `prompt(content, partial)` | sync | Builds the LLM request. Covers `partial.missing` in fill-gaps mode, every schema field in cross-check mode. |
+| `parse(raw)` | sync | Parses a raw LLM JSON response, validating each field individually. Never throws. |
 | `merge(partial, llmResult, content)` | sync | Merges rules + LLM, detects conflicts, normalizes, validates. |
 
 ## License

@@ -4,56 +4,101 @@ import type {
   ExtractionResult,
   LlmResult,
 } from './types/merge.types.js';
-import type { LlmRequest } from './types/prompt.types.js';
+import type { LlmRequest, PromptBuildOptions } from './types/prompt.types.js';
 
 const DEFAULT_SYSTEM_PROMPT =
   'Extract the listed fields from the content as a JSON object.';
 
 type ZodFieldDef = { type: string; [extra: string]: unknown };
-type ZodLike = { def: ZodFieldDef };
+type ZodLike = { def: ZodFieldDef; description?: string };
 
 /**
- * Convert a single Zod field schema to JSON Schema. Throws on any Zod kind
- * outside the documented whitelist (`string`, `number`, `boolean`, `enum`,
- * `nullable`), naming the offending field so the caller can restructure
+ * Convert a `z.nullable(inner)` into JSON Schema by recursing into `inner`
+ * and widening its `type` to `[innerType, 'null']`. Refuses nested nullables
+ * whose inner already carries a tuple `type`.
+ */
+function nullableToJsonSchema(def: ZodFieldDef, field: string): Record<string, unknown> {
+  const inner = zodFieldToJsonSchema(def.innerType as ZodLike, field);
+  const innerType = inner.type;
+  if (typeof innerType !== 'string') {
+    throw new Error(`Unsupported nested nullable on field "${field}"`);
+  }
+  return { ...inner, type: [innerType, 'null'] };
+}
+
+/**
+ * Convert a `z.object(shape)` into JSON Schema by recursing over every
+ * property. Children wrapped in `z.optional(...)` are kept in `properties`
+ * but excluded from the object-level `required` list.
+ */
+function objectToJsonSchema(def: ZodFieldDef, field: string): Record<string, unknown> {
+  const shape = def.shape as Record<string, ZodLike>;
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const [key, child] of Object.entries(shape)) {
+    properties[key] = zodFieldToJsonSchema(child, `${field}.${key}`);
+    if (child.def.type !== 'optional') {
+      required.push(key);
+    }
+  }
+  return { type: 'object', properties, required, additionalProperties: false };
+}
+
+/**
+ * Dispatch the conversion by Zod kind. Primitives short-circuit, wrappers
+ * (`optional`, `default`, `nullable`, `array`, `object`) recurse, unsupported
+ * kinds throw with the offending `field` named so the caller can restructure
  * their schema.
  */
-function zodFieldToJsonSchema(zodType: ZodLike, field: string): Record<string, unknown> {
-  const def = zodType.def;
-  const kind = def.type;
+function zodKindToJsonSchema(
+  def: ZodFieldDef,
+  kind: string,
+  field: string,
+): Record<string, unknown> {
+  switch (kind) {
+    case 'string':
+    case 'number':
+    case 'boolean':
+      return { type: kind };
+    case 'enum':
+      return { type: 'string', enum: Object.values(def.entries as Record<string, string | number>) };
+    case 'nullable':
+      return nullableToJsonSchema(def, field);
+    case 'optional':
+    case 'default':
+      return zodFieldToJsonSchema(def.innerType as ZodLike, field);
+    case 'array':
+      return { type: 'array', items: zodFieldToJsonSchema(def.element as ZodLike, field) };
+    case 'object':
+      return objectToJsonSchema(def, field);
+    default:
+      throw new Error(`Unsupported Zod type "${kind}" on field "${field}"`);
+  }
+}
 
-  if (kind === 'string') {
-    return { type: 'string' };
-  }
-  if (kind === 'number') {
-    return { type: 'number' };
-  }
-  if (kind === 'boolean') {
-    return { type: 'boolean' };
-  }
-  if (kind === 'enum') {
-    const entries = def.entries as Record<string, string | number>;
-    return { type: 'string', enum: Object.values(entries) };
-  }
-  if (kind === 'nullable') {
-    const inner = zodFieldToJsonSchema(def.innerType as ZodLike, field);
-    if (typeof inner.type !== 'string') {
-      throw new Error(`Unsupported nested nullable on field "${field}"`);
-    }
-    return { ...inner, type: [inner.type, 'null'] };
-  }
-  throw new Error(`Unsupported Zod type "${kind}" on field "${field}"`);
+/**
+ * Convert a single Zod field schema to JSON Schema. Wraps the kind-level
+ * dispatch with a `description` pass so `.describe()` / `.meta({ description })`
+ * registered at this recursion level flows through to the output; providers'
+ * structured-output features consume it natively.
+ */
+function zodFieldToJsonSchema(zodType: ZodLike, field: string): Record<string, unknown> {
+  const schema = zodKindToJsonSchema(zodType.def, zodType.def.type, field);
+  const description = zodType.description;
+  return description ? { ...schema, description } : schema;
 }
 
 /**
  * Build the JSON Schema handed to the LLM, restricted to the fields the
- * deterministic pass could not produce.
+ * deterministic pass could not produce. Optional top-level fields are kept
+ * in `properties` but excluded from `required`.
  */
 function buildResponseSchema(
   schema: z.ZodObject<z.ZodRawShape>,
   missing: readonly string[],
 ): Record<string, unknown> {
   const properties: Record<string, Record<string, unknown>> = {};
+  const required: string[] = [];
   const shape = schema.shape as unknown as Record<string, ZodLike>;
   for (const field of missing) {
     const zodField = shape[field];
@@ -61,8 +106,11 @@ function buildResponseSchema(
       continue;
     }
     properties[field] = zodFieldToJsonSchema(zodField, field);
+    if (zodField.def.type !== 'optional') {
+      required.push(field);
+    }
   }
-  return { type: 'object', properties, required: [...missing] };
+  return { type: 'object', properties, required, additionalProperties: false };
 }
 
 /**
@@ -178,34 +226,51 @@ function collectUnexpectedKeys(
  */
 export const prompt = {
   /**
-   * Build an LLM request restricted to `partial.missing`. The response schema
-   * is a JSON Schema covering only those fields, and values already produced
-   * by the deterministic pass are surfaced both as `knownValues` and as a
-   * hint block prepended to `userContent`.
+   * Build an LLM request targeting a subset of the schema's fields.
    *
-   * Orchestration only — the four phases (response-schema build, known-values
+   * - In `'fill-gaps'` mode (default) the response schema covers only
+   *   `partial.missing`, and rule values flow back to the LLM as hints both
+   *   through `knownValues` and a prepended "Already extracted" block in
+   *   `userContent`.
+   * - In `'cross-check'` mode the response schema covers every schema field,
+   *   so {@link merge.apply} can surface agreements or disagreements with
+   *   the rule pass. `crossCheckHints: 'unbiased'` (default) drops the hint
+   *   block and empties `knownValues` so the LLM re-extracts from scratch;
+   *   `'bias'` keeps the hints to save tokens at the cost of confirmation
+   *   bias.
+   *
+   * Orchestration only: the four phases (response-schema build, known-values
    * collection, user-content formatting, request assembly) each live in their
    * own private helper above.
    *
    * @typeParam S - A Zod object schema describing the full target shape.
    * @param schema - Zod object schema that drives the field selection.
    * @param partial - Output of {@link merge.apply} (or any equivalent partial)
-   *   — only `data` and `missing` are read.
+   *   `data` is always read; `missing` drives the fill-gaps schema and the
+   *   hint block.
    * @param content - Original text the request will refer to.
-   * @param options - Optional behavior overrides (custom system prompt).
-   * @throws When a missing field uses a Zod kind outside the supported
-   *   whitelist; the error message names the offending field.
+   * @param options - Optional overrides: `systemPrompt`, `mode`, `crossCheckHints`.
+   * @throws When a target field uses an unsupported Zod kind; the error
+   *   message names the offending field.
    */
   build<S extends z.ZodObject<z.ZodRawShape>>(
     schema: S,
     partial: Pick<ExtractionResult<z.infer<S>>, 'data' | 'missing'>,
     content: string,
-    options?: { systemPrompt?: string },
+    options?: PromptBuildOptions,
   ): LlmRequest {
     type Data = z.infer<S>;
-    const missing = partial.missing as readonly string[];
-    const responseSchema = buildResponseSchema(schema, missing);
-    const knownValues = collectKnownValues<Data>(partial.data, partial.missing);
+    const mode = options?.mode ?? 'fill-gaps';
+    const crossCheckHints = options?.crossCheckHints ?? 'unbiased';
+    const targetFields =
+      mode === 'cross-check'
+        ? (Object.keys(schema.shape) as readonly string[])
+        : (partial.missing as readonly string[]);
+    const responseSchema = buildResponseSchema(schema, targetFields);
+    const exposeHints = mode === 'fill-gaps' || crossCheckHints === 'bias';
+    const knownValues = exposeHints
+      ? collectKnownValues<Data>(partial.data, partial.missing)
+      : {};
     const userContent = formatUserContent(content, knownValues);
     return {
       systemPrompt: options?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
