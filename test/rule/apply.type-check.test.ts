@@ -4,7 +4,7 @@ import { rule } from '../../src/rules.js';
 
 const schemaExpectingNumber = z.object({ age: z.number() });
 
-describe('rule.apply — schema type-check', () => {
+describe('rule.apply - schema type-check', () => {
   it('discards a rule match whose value does not satisfy the schema field type', () => {
     const ruleReturnsString = rule.create('age', () => ({ value: '30', confidence: 1.0 }));
 

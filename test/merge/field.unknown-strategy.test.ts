@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { merge } from '../../src/merge.js';
 import type { FieldMergePolicy } from '../../src/types/merge.types.js';
 
-describe('merge.field — unknown strategy fallback', () => {
+describe('merge.field - unknown strategy fallback', () => {
   it('warns the logger and falls back to flag behavior when the strategy slipped past the type system', () => {
     const logger = { warn: vi.fn() };
     const invalidPolicy = { strategy: 'invalid' } as unknown as Partial<FieldMergePolicy>;

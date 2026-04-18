@@ -5,13 +5,13 @@
 [![license](https://img.shields.io/npm/l/llmbic.svg)](./LICENSE)
 [![node](https://img.shields.io/node/v/llmbic.svg)](https://nodejs.org)
 
-Hybrid data extraction — deterministic rules + LLM fallback, with per-field confidence scoring.
+Hybrid data extraction - deterministic rules + LLM fallback, with per-field confidence scoring.
 
 The name folds **LLM** into [*lambic*](https://en.wikipedia.org/wiki/Lambic), the Belgian beer made by blending wild fermentation with a controlled process. Same idea here: LLMs are unpredictable, rules are rigid, and the mix produces something reliable.
 
 ## Why
 
-Extracting structured data from unstructured text is a solved problem — until you need it to be *reliable*. Rules (regex, parsers) are deterministic but brittle. LLMs understand context but hallucinate. Neither is enough alone.
+Extracting structured data from unstructured text is a solved problem - until you need it to be *reliable*. Rules (regex, parsers) are deterministic but brittle. LLMs understand context but hallucinate. Neither is enough alone.
 
 Llmbic combines both: deterministic rules extract what they can with full confidence, the LLM fills in the gaps, and a merge layer detects conflicts between the two. Every field carries a confidence score. You know exactly what's trustworthy and what needs review.
 
@@ -21,7 +21,7 @@ Llmbic combines both: deterministic rules extract what they can with full confid
 npm install llmbic
 ```
 
-Llmbic has a single dependency: [Zod](https://zod.dev). No vendor SDK is pulled in — you bring your own LLM provider via the 1-method `LlmProvider` interface (see "Writing a provider" below).
+Llmbic has a single dependency: [Zod](https://zod.dev). No vendor SDK is pulled in - you bring your own LLM provider via the 1-method `LlmProvider` interface (see "Writing a provider" below).
 
 ## Quick start
 
@@ -111,7 +111,7 @@ console.log(result.confidence);
 // { total: 1.0, currency: 1.0, vendor: 0.7, date: 0.7 }
 
 console.log(result.conflicts);
-// [] — no disagreement between rules and LLM
+// [] - no disagreement between rules and LLM
 ```
 
 ### Batch / async mode (for OpenAI Batch API, job queues, etc.)
@@ -119,19 +119,19 @@ console.log(result.conflicts);
 When you manage the LLM call yourself (batching, polling, custom transport), use the 4-step API:
 
 ```typescript
-// Step 1 — Deterministic extraction (sync, instant)
+// Step 1 - Deterministic extraction (sync, instant)
 const partial = extractor.extractSync(markdown);
 
-// Step 2 — Build the LLM request (you send it however you want)
+// Step 2 - Build the LLM request (you send it however you want)
 const llmRequest = extractor.prompt(markdown, partial);
-// → { systemPrompt, userContent, responseSchema, knownValues }
+// -> { systemPrompt, userContent, responseSchema, knownValues }
 
 // ... submit to OpenAI Batch API, poll later, get the response ...
 
-// Step 3 — Parse the raw LLM response
+// Step 3 - Parse the raw LLM response
 const llmResult = extractor.parse(rawJsonResponse);
 
-// Step 4 — Merge everything (fusion + conflict detection + validation)
+// Step 4 - Merge everything (fusion + conflict detection + validation)
 const result = extractor.merge(partial, llmResult, markdown);
 ```
 
@@ -181,12 +181,12 @@ End-to-end runnable example (upload + poll + download + merge): [`examples/opena
 
 ### Per-field confidence scoring
 
-Every field in the result carries a confidence score (0.0–1.0):
+Every field in the result carries a confidence score (0.0-1.0):
 
 | Source | Confidence |
 |--------|-----------|
 | Deterministic rule, exact match | 1.0 |
-| Deterministic rule, partial match | 0.7–0.9 (you decide) |
+| Deterministic rule, partial match | 0.7-0.9 (you decide) |
 | LLM only | configurable default (0.7) |
 | Rule + LLM agree | 1.0 |
 | Rule + LLM disagree | 0.3 (flagged as conflict) |
@@ -223,7 +223,7 @@ result.conflicts;
 // [{ field: 'total', ruleValue: 1250, ruleConfidence: 1.0, llmValue: 1520 }]
 ```
 
-Three conflict strategies: `'flag'` (default — keep rule value, record conflict), `'prefer-rule'`, or `'prefer-llm'`.
+Three conflict strategies: `'flag'` (default - keep rule value, record conflict), `'prefer-rule'`, or `'prefer-llm'`.
 
 In the default `'fill-gaps'` mode the LLM is only asked about fields the rules could not resolve, so conflicts are impossible. To actually trigger conflict detection, opt into cross-check (see below).
 
@@ -262,6 +262,35 @@ const extractor = createExtractor({
 ```
 
 The merge step now sees two candidates per field and surfaces real disagreements through `result.conflicts`. `crossCheckHints: 'bias'` re-exposes the rule values as hints to save tokens, at the cost of confirmation bias (the LLM tends to agree with what it was shown).
+
+### Per-call context
+
+Rules can accept a second, caller-provided argument alongside `content` so they can read per-call metadata (locale, tenant configuration, feature flags) without having to capture it in a closure at declaration time:
+
+```typescript
+import { createExtractor, rule } from 'llmbic';
+import { z } from 'zod';
+
+type Region = { region: 'us' | 'uk' };
+
+const schema = z.object({ price: z.string() });
+
+const priceRule = rule.create<Region>('price', (content, context) => {
+  const pattern = context?.region === 'uk' ? /£\s*(\d+)/ : /\$\s*(\d+)/;
+  const match = content.match(pattern);
+  return match ? rule.confidence(match[1]!, 1) : null;
+});
+
+const extractor = createExtractor<typeof schema, Region>({
+  schema,
+  rules: [priceRule],
+});
+
+await extractor.extract('Listed at £42', { region: 'uk' });
+// -> { price: '42' }
+```
+
+The type parameter on `rule.create<TContext>` flows to the generic on `createExtractor<Schema, TContext>` and is enforced at every call site. `context` is forwarded verbatim to every rule's `extract` callback; rules that ignore the argument still compile and work. `extractSync(content, context?)` behaves the same way for batch workflows. `Extractor.merge` reuses the partial's values and does not re-evaluate rules, so it takes no `context`.
 
 ### Rich schemas
 
@@ -339,7 +368,7 @@ Common patterns:
 
 ## Writing a provider
 
-Llmbic does not ship vendor-specific adapters. The `LlmProvider` contract is a single method — wiring to any backend (OpenAI, Anthropic, Ollama, vLLM, Gemini, custom HTTP, ...) is ~10 lines you write and own.
+Llmbic does not ship vendor-specific adapters. The `LlmProvider` contract is a single method - wiring to any backend (OpenAI, Anthropic, Ollama, vLLM, Gemini, custom HTTP, ...) is ~10 lines you write and own.
 
 ```typescript
 import type { LlmProvider } from 'llmbic';
@@ -404,7 +433,7 @@ const provider: LlmProvider = {
 };
 ```
 
-**Ollama** (native `format` — JSON Schema, requires Ollama 0.5+):
+**Ollama** (native `format` - JSON Schema, requires Ollama 0.5+):
 
 ```typescript
 const client = new Ollama();
@@ -423,27 +452,27 @@ const provider: LlmProvider = {
 };
 ```
 
-Observability (token usage, latency, cost accounting) is out of scope — wrap the `complete` call in whatever telemetry you already use.
+Observability (token usage, latency, cost accounting) is out of scope - wrap the `complete` call in whatever telemetry you already use.
 
 ## Design decisions
 
-- **One dependency** — Zod only. No vendor SDK ever enters the import graph; you bring your own LLM provider (see "Writing a provider").
-- **No retry** — If the LLM returns invalid data, `parse()` does best-effort parsing (valid fields kept, invalid ignored). Retry is an orchestration concern.
-- **No streaming** — Llmbic works with complete results. Streaming is a transport concern.
-- **No chunking** — One content = one extraction. If your content is too long, split it before calling Llmbic.
-- **Normalizers mutate** — For pragmatic reasons, normalizers receive and return the same object. The `merge()` function copies the data first, so the original is never modified.
-- **Rules are sync** — Extraction rules are pure synchronous functions. If you need async lookups, do them before creating the rule.
+- **One dependency** - Zod only. No vendor SDK ever enters the import graph; you bring your own LLM provider (see "Writing a provider").
+- **No retry** - If the LLM returns invalid data, `parse()` does best-effort parsing (valid fields kept, invalid ignored). Retry is an orchestration concern.
+- **No streaming** - Llmbic works with complete results. Streaming is a transport concern.
+- **No chunking** - One content = one extraction. If your content is too long, split it before calling Llmbic.
+- **Normalizers mutate** - For pragmatic reasons, normalizers receive and return the same object. The `merge()` function copies the data first, so the original is never modified.
+- **Rules are sync** - Extraction rules are pure synchronous functions. If you need async lookups, do them before creating the rule.
 
 ## API reference
 
 ### `createExtractor(config)`
 
-Creates an extractor instance. Config:
+Creates an extractor instance. Signature: `createExtractor<S, TContext = unknown>(config)`. `TContext` is optional and describes the per-call context passed to `Extractor.extract(content, context?)`; see [Per-call context](#per-call-context). Config:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `schema` | `ZodObject` | yes | Output schema (drives field enumeration and re-validation). |
-| `rules` | `ExtractionRule[]` | yes | Deterministic extraction rules. |
+| `rules` | `ExtractionRule<TContext>[]` | yes | Deterministic extraction rules. |
 | `llm` | `ExtractorLlmConfig` | no | LLM fallback. Omit for rules-only mode. See below. |
 | `normalizers` | `Normalizer<T>[]` | no | Post-merge transformations, run in declared order. |
 | `validators` | `Validator<ExtractedData<T>>[]` | no | Invariants populating `result.validation`. |
@@ -466,10 +495,10 @@ Creates an extractor instance. Config:
 
 | Member | Signature | Description |
 |---|---|---|
-| `rule.create` | `(field, extract, options?) => ExtractionRule` | Declare a rule. `extract(content)` returns a `RuleMatch` or `null`. `options.id` sets the stable identifier surfaced in `result.sources`. |
+| `rule.create` | `<TContext = unknown>(field, extract, options?) => ExtractionRule<TContext>` | Declare a rule. `extract(content, context?)` returns a `RuleMatch` or `null`. `options.id` sets the stable identifier surfaced in `result.sources`. `TContext` is inferred from the callback when present. |
 | `rule.regex` | `(field, pattern, score, transform?, options?) => ExtractionRule` | Regex-based rule. On match, capture group 1 (or the full match) is fed to `transform`. `options.id` sets the stable identifier surfaced in `result.sources`. |
 | `rule.confidence` | `(value, score) => RuleMatch` | Wrap a value and a confidence score; sugar for custom `extract` callbacks. |
-| `rule.apply` | `(content, rules, schema, logger?) => RulesResult` | Run every rule, pick the highest-confidence match per field, type-check against the schema. |
+| `rule.apply` | `<S, TContext = unknown>(content, rules, schema, logger?, context?) => RulesResult` | Run every rule, pick the highest-confidence match per field, type-check against the schema. `context` is forwarded verbatim to each rule's `extract` callback. |
 
 ### `validator.of<T>()`
 
@@ -484,11 +513,11 @@ Binding `T` once lets TypeScript infer each field's type from the field name, so
 
 | Method | Sync | Description |
 |--------|------|-------------|
-| `extract(content)` | async | Full pipeline: rules -> LLM (if configured) -> merge -> normalize -> validate. |
-| `extractSync(content)` | sync | Rules only. Returns the partial result + `missing` fields. |
+| `extract(content, context?)` | async | Full pipeline: rules -> LLM (if configured) -> merge -> normalize -> validate. `context` is forwarded verbatim to every rule's `extract` callback. |
+| `extractSync(content, context?)` | sync | Rules only. Returns the partial result + `missing` fields. `context` is forwarded verbatim to every rule's `extract` callback. |
 | `prompt(content, partial)` | sync | Builds the LLM request. Covers `partial.missing` in fill-gaps mode, every schema field in cross-check mode. |
 | `parse(raw)` | sync | Parses a raw LLM JSON response, validating each field individually. Never throws. |
-| `merge(partial, llmResult, content)` | sync | Merges rules + LLM, detects conflicts, normalizes, validates. |
+| `merge(partial, llmResult, content)` | sync | Merges rules + LLM, detects conflicts, normalizes, validates. Does not re-evaluate rules, so takes no `context`. |
 
 ## License
 

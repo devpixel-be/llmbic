@@ -17,7 +17,7 @@ const personRules = [
   rule.regex('age', /(\d+)\s*years/, 0.8, (match) => Number(match[1])),
 ];
 
-describe('createExtractor.extract — rules-only mode', () => {
+describe('createExtractor.extract - rules-only mode', () => {
   it('runs the rules, fuses them against a null LLM result, and returns a full ExtractionResult', async () => {
     const extractor = createExtractor({ schema: personSchema, rules: personRules });
 
@@ -102,7 +102,7 @@ describe('createExtractor.extract: cross-check mode', () => {
   });
 });
 
-describe('createExtractor.extract — full mode with LLM fallback', () => {
+describe('createExtractor.extract - full mode with LLM fallback', () => {
   it('asks the provider for missing fields only, parses its response, and returns complete data', async () => {
     let capturedRequest: LlmRequest | undefined;
     const provider: LlmProvider = {

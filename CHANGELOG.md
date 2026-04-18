@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-04-18
+
+Non-breaking. Rules can now read a caller-provided `context` object alongside `content`, so per-call metadata (locale, tenant configuration, feature flags) no longer has to be captured in rule closures at declaration time.
+
+### Added
+
+- `ExtractionRule<TContext = unknown>` - optional generic type parameter describing the shape of a per-call context forwarded to `extract`. Defaults to `unknown`, so context-unaware rules and legacy code compile unchanged.
+- `ExtractionRule.extract(content, context?)` - second optional argument, forwarded verbatim by `rule.apply` / `Extractor.extract` / `Extractor.extractSync`. Left `undefined` when the caller passes no context.
+- `rule.create<TContext>(field, extract, options?)` - `create` is now generic over `TContext`, so typed contexts flow from the callback signature to the returned `ExtractionRule<TContext>`. `rule.regex` stays context-unaware and remains assignable to any `ExtractionRule<TContext>[]` via contextual parameter contravariance.
+- `rule.apply<S, TContext>(content, rules, schema, logger?, context?)` - fifth optional argument passed through to every rule's `extract` callback.
+- `ExtractorConfig<S, TContext = unknown>` and `Extractor<T, TContext = unknown>` - second optional generic parameter shared with the rules array. `Extractor.extract(content, context?)` and `Extractor.extractSync(content, context?)` forward `context` to `rule.apply`. `Extractor.merge` does not re-evaluate rules and accepts no `context`.
+
+### Docs
+
+- `CONTRIBUTING.md` - documents the 5-step release procedure (tests, bump, doc, tag, publish) to keep future releases aligned with the SemVer + npm publish lifecycle.
+
 ## [1.2.0] - 2026-04-16
 
 Non-breaking. Production-readiness pass: per-field provenance, per-field merge policy, and pre/post LLM transformers. Token / cost tracking deliberately stays out of scope - `LlmProvider` keeps observability as a caller concern; wrap your `complete` for telemetry.
@@ -46,18 +62,18 @@ Non-breaking. Unblocks hybrid workflows that rely on nested schemas, agreement/c
 - `ExtractorConfig<S>` gains optional `normalizers`, `validators`, `policy`, `logger`.
 - `ExtractorLlmConfig` gains optional `mode`, `crossCheckHints`.
 
-## [1.0.0] — 2026-04-15
+## [1.0.0] - 2026-04-15
 
 Initial public release.
 
 ### Added
 
-- `createExtractor(config)` — factory binding a Zod schema, deterministic rules and an optional LLM fallback into an extractor with `extract`, `extractSync`, `prompt`, `parse` and `merge` methods. Covers both one-shot async extraction and 4-step batch flows (extractSync → prompt → external LLM call → parse → merge).
-- `rule` namespace — `rule.create(field, extractFn)`, `rule.regex(field, pattern, score, transform?)`, `rule.confidence(value, score)`, `rule.apply(content, rules, schema, logger?)`. Deterministic rules are pure synchronous functions returning typed matches with a confidence score in `[0, 1]`.
-- `merge` namespace — `merge.apply(schema, rulesResult, llmResult, content, options?)` fuses rules output with LLM output, detects per-field conflicts, runs normalizers, re-validates against the Zod schema, and runs custom validators. `merge.defaultFieldPolicy` exposes the built-in fusion rules.
-- `prompt` namespace — `prompt.build(schema, partial, options?)` emits an `LlmRequest` (`systemPrompt`, `userContent`, `responseSchema`, `knownValues`) restricted to fields missing from the deterministic pass. `prompt.parse(raw, missing, schema)` is a permissive parser that validates each field individually via Zod, drops invalid or unexpected keys, and never throws.
-- `validator` namespace — `validator.of<T>()` returns `{ field, crossField }` factories bound to the data shape `T`, so predicates are fully typed from the field name.
-- `LlmProvider` contract — single-method interface (`complete(request) → { values }`) consumers implement to wire any backend (OpenAI, Anthropic, Ollama, custom HTTP, ...). No vendor SDK is pulled into the import graph.
+- `createExtractor(config)` - factory binding a Zod schema, deterministic rules and an optional LLM fallback into an extractor with `extract`, `extractSync`, `prompt`, `parse` and `merge` methods. Covers both one-shot async extraction and 4-step batch flows (extractSync -> prompt -> external LLM call -> parse -> merge).
+- `rule` namespace - `rule.create(field, extractFn)`, `rule.regex(field, pattern, score, transform?)`, `rule.confidence(value, score)`, `rule.apply(content, rules, schema, logger?)`. Deterministic rules are pure synchronous functions returning typed matches with a confidence score in `[0, 1]`.
+- `merge` namespace - `merge.apply(schema, rulesResult, llmResult, content, options?)` fuses rules output with LLM output, detects per-field conflicts, runs normalizers, re-validates against the Zod schema, and runs custom validators. `merge.defaultFieldPolicy` exposes the built-in fusion rules.
+- `prompt` namespace - `prompt.build(schema, partial, options?)` emits an `LlmRequest` (`systemPrompt`, `userContent`, `responseSchema`, `knownValues`) restricted to fields missing from the deterministic pass. `prompt.parse(raw, missing, schema)` is a permissive parser that validates each field individually via Zod, drops invalid or unexpected keys, and never throws.
+- `validator` namespace - `validator.of<T>()` returns `{ field, crossField }` factories bound to the data shape `T`, so predicates are fully typed from the field name.
+- `LlmProvider` contract - single-method interface (`complete(request) -> { values }`) consumers implement to wire any backend (OpenAI, Anthropic, Ollama, custom HTTP, ...). No vendor SDK is pulled into the import graph.
 - Per-field confidence scoring, conflict detection (`flag` / `prefer-rule` / `prefer-llm` strategies), and extraction metadata (`durationMs`, rule/LLM field counts).
 - Full TypeScript `.d.ts` output with JSDoc on every public type, method and configuration field.
 - Example wiring a local Ollama runtime under `examples/ollama.ts`.

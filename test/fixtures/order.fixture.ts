@@ -3,7 +3,7 @@ import { rule } from '../../src/rules.js';
 import type { ExtractionRule } from '../../src/types/rule.types.js';
 
 /**
- * Zod schema for an `Order` document — spans string, number, enum and nullable
+ * Zod schema for an `Order` document - spans string, number, enum and nullable
  * so the end-to-end test exercises every Zod kind supported by `prompt.build`.
  */
 export const orderSchema = z.object({

@@ -1,5 +1,5 @@
 /**
- * Llmbic — public entry point.
+ * Llmbic - public entry point.
  *
  * Re-exports the five namespaces that make up the library (`createExtractor`,
  * `rule`, `merge`, `prompt`, `validator`) and every public type consumers need

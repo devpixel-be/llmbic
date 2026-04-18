@@ -14,8 +14,18 @@ export type RuleMatch<T> = {
 /**
  * A deterministic rule that tries to extract a single schema field from raw
  * content. `extract` returns `null` when the rule does not apply.
+ *
+ * Rules can optionally accept a `context` argument: an opaque, caller-defined
+ * value forwarded verbatim by `rule.apply` / `Extractor.extract`. Typical use
+ * is to expose per-call metadata (locale, tenant-specific configuration,
+ * feature flags) rules need to decide whether they apply. `TContext`
+ * defaults to `unknown` so context-unaware rules stay assignable to arrays
+ * typed with any context.
+ *
+ * @typeParam TContext - Shape of the optional per-call context forwarded to
+ *   `extract`. Defaults to `unknown`.
  */
-export type ExtractionRule = {
+export type ExtractionRule<TContext = unknown> = {
   /**
    * Stable identifier surfaced in `ExtractionResult.sources` when this rule
    * produces the kept value. Optional: when omitted, `rule.apply` assigns
@@ -25,8 +35,13 @@ export type ExtractionRule = {
   id?: string;
   /** Name of the schema field this rule targets. */
   field: string;
-  /** Inspects `content` and returns a match, or `null` if nothing was found. */
-  extract: (content: string) => RuleMatch<unknown> | null;
+  /**
+   * Inspects `content` - and optionally a caller-provided `context` -
+   * and returns a match, or `null` if nothing was found. `context` is
+   * forwarded verbatim by `rule.apply` / `Extractor.extract` and left
+   * `undefined` when the caller passes no context.
+   */
+  extract: (content: string, context?: TContext) => RuleMatch<unknown> | null;
 };
 
 /**

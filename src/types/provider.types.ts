@@ -9,7 +9,7 @@ export type LlmProvider = {
   /**
    * Send `request` to the underlying model and return the structured values
    * it produced. Observability concerns (token counters, latency, cost) are
-   * the caller's responsibility — they live outside the llmbic contract so
+   * the caller's responsibility - they live outside the llmbic contract so
    * the library stays free of vendor-specific metering.
    *
    * @param request - Prompt, user content, and JSON Schema built by {@link prompt.build}.

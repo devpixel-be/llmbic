@@ -114,7 +114,7 @@ function buildResponseSchema(
 }
 
 /**
- * Pick the non-null, non-missing entries of the partial result — the values
+ * Pick the non-null, non-missing entries of the partial result - the values
  * the deterministic pass has already resolved.
  */
 function collectKnownValues<T>(
@@ -283,7 +283,7 @@ export const prompt = {
   /**
    * Parse a raw LLM response permissively. Accepts either an already-decoded
    * object or a JSON-encoded string. Each field listed in `missing` is
-   * validated individually against its Zod schema — valid fields flow into
+   * validated individually against its Zod schema - valid fields flow into
    * `values`, invalid ones are dropped and surfaced as warnings. Keys outside
    * `missing` are dropped as well, with a single aggregated warning so the
    * caller can spot a prompt/provider mismatch.
@@ -294,7 +294,7 @@ export const prompt = {
    * @param schema - Zod object schema whose fields back the validation.
    * @param missing - Fields the LLM was expected to produce (typically
    *   {@link ExtractionResult.missing}).
-   * @param raw - The provider response — object or JSON string.
+   * @param raw - The provider response - object or JSON string.
    */
   parse<S extends z.ZodObject<z.ZodRawShape>>(
     schema: S,

@@ -65,12 +65,18 @@ export type ExtractorLlmConfig = {
  * produce values for each field before any LLM fallback kicks in.
  *
  * @typeParam S - A Zod object schema describing the target data shape.
+ * @typeParam TContext - Shape of the optional per-call context forwarded to
+ *   every rule's `extract` callback. Defaults to `unknown`, which keeps
+ *   context-unaware rules assignable with zero boilerplate.
  */
-export type ExtractorConfig<S extends z.ZodObject<z.ZodRawShape>> = {
+export type ExtractorConfig<
+  S extends z.ZodObject<z.ZodRawShape>,
+  TContext = unknown,
+> = {
   /** Zod object schema the extractor targets. Drives field enumeration and re-validation. */
   schema: S;
   /** Deterministic rules evaluated against the raw content before any LLM fallback. */
-  rules: ExtractionRule[];
+  rules: ExtractionRule<TContext>[];
   /** Optional LLM fallback invoked for fields the rules could not produce. */
   llm?: ExtractorLlmConfig;
   /** Post-merge transformations, forwarded to every `merge.apply` call. */
@@ -94,21 +100,25 @@ export type ExtractorConfig<S extends z.ZodObject<z.ZodRawShape>> = {
  * this interface as the matching slice introduces them.
  *
  * @typeParam T - Shape of the target data object inferred from a Zod schema.
+ * @typeParam TContext - Shape of the optional per-call context forwarded to
+ *   every rule's `extract` callback. Defaults to `unknown`.
  */
-export type Extractor<T> = {
+export type Extractor<T, TContext = unknown> = {
   /**
    * Run the full extraction pipeline against `content`: deterministic rules,
    * optionally followed by an LLM fallback for missing fields, then the merge
-   * + validation step.
+   * + validation step. An optional `context` is forwarded verbatim to every
+   * rule's `extract` callback.
    */
-  extract(content: string): Promise<ExtractionResult<T>>;
+  extract(content: string, context?: TContext): Promise<ExtractionResult<T>>;
   /**
    * Run the deterministic rules and merge them against a `null` LLM result.
    * Synchronous counterpart to {@link Extractor.extract} for batch workflows
    * where the LLM call is managed by the caller (queues, scheduled jobs,
-   * external batch APIs).
+   * external batch APIs). An optional `context` is forwarded verbatim to
+   * every rule's `extract` callback.
    */
-  extractSync(content: string): ExtractionResult<T>;
+  extractSync(content: string, context?: TContext): ExtractionResult<T>;
   /**
    * Build the LLM request for `partial`. The target field set depends on the
    * configured `llm.mode`: `'fill-gaps'` (default) covers only
@@ -125,10 +135,10 @@ export type Extractor<T> = {
    */
   parse(raw: unknown): LlmResult;
   /**
-   * Merge a previously-obtained `partial` with an LLM result and re-run the
-   * deterministic rules to produce the final {@link ExtractionResult}.
-   * Rules are pure, so re-running them is cheaper than carrying private
-   * state on the extractor.
+   * Merge a previously-obtained `partial` with an LLM result to produce the
+   * final {@link ExtractionResult}. Reuses the per-field values, confidence
+   * and provenance already carried by `partial`: the deterministic rules are
+   * not re-evaluated, so no `context` parameter is accepted here.
    */
   merge(
     partial: ExtractionResult<T>,

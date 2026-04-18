@@ -14,8 +14,8 @@ const personRules = [
   rule.regex('age', /(\d+)\s*years/, 0.8, (match) => Number(match[1])),
 ];
 
-describe('createExtractor — batch-mode sync methods', () => {
-  it('chains extractSync → prompt → parse → merge without involving the provider', () => {
+describe('createExtractor - batch-mode sync methods', () => {
+  it('chains extractSync -> prompt -> parse -> merge without involving the provider', () => {
     const extractor = createExtractor({ schema: personSchema, rules: personRules });
     const content = 'Ada, 30 years old, senior engineer.';
 

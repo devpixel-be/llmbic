@@ -1,6 +1,6 @@
 /**
  * Minimal logger interface consumed by llmbic internals. Any logger that
- * exposes a `warn` method (and optionally `info`) can be plugged in —
+ * exposes a `warn` method (and optionally `info`) can be plugged in -
  * pino, winston, `console`, or a test double.
  */
 export type Logger = {

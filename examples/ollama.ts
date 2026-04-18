@@ -3,9 +3,9 @@
  *
  * Run: `OLLAMA_MODEL=gemma3:27b npm run example:ollama`
  *
- * Not part of `npm test` — hitting a live LLM is slow and non-deterministic.
- * The pipeline exercised here is the full one: rules → prompt.build →
- * provider.complete → prompt.parse → merge, against a real structured-output
+ * Not part of `npm test` - hitting a live LLM is slow and non-deterministic.
+ * The pipeline exercised here is the full one: rules -> prompt.build ->
+ * provider.complete -> prompt.parse -> merge, against a real structured-output
  * backend.
  *
  * The `LlmProvider` below is inlined on purpose: llmbic ships no
@@ -59,7 +59,7 @@ Grand total: € 42.30
 
 Billed to Alice Durand, Studio Orange, VAT BE0123.456.789.
 Paid by bank transfer on the same day.
-Please wrap as a gift — this is a birthday present.
+Please wrap as a gift - this is a birthday present.
 Notes: leave at the reception if nobody is in; do NOT ring the neighbors.
 `.trim();
 
@@ -82,8 +82,8 @@ function ollamaProvider(client: Ollama, model: string): LlmProvider {
 async function main() {
   const model = process.env.OLLAMA_MODEL ?? 'gemma3:27b';
   const host = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
-  console.log(`→ model: ${model}`);
-  console.log(`→ host:  ${host}\n`);
+  console.log(`-> model: ${model}`);
+  console.log(`-> host:  ${host}\n`);
 
   const extractor = createExtractor({
     schema: orderSchema,
@@ -91,7 +91,7 @@ async function main() {
     llm: {
       provider: ollamaProvider(new Ollama({ host }), model),
       systemPrompt:
-        'You extract structured fields from an order document. Return ONLY the JSON object that matches the provided schema — no preamble, no markdown fences.',
+        'You extract structured fields from an order document. Return ONLY the JSON object that matches the provided schema - no preamble, no markdown fences.',
     },
   });
 

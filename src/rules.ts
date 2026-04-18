@@ -11,20 +11,25 @@ export const rule = {
    * Declare a deterministic extraction rule targeting a single schema field.
    *
    * The `extract` callback receives the raw content and must return either a
-   * {@link RuleMatch} or `null` when the rule does not apply.
+   * {@link RuleMatch} or `null` when the rule does not apply. It may also
+   * accept an optional caller-defined `context` forwarded verbatim by
+   * {@link rule.apply} / {@link Extractor.extract}.
    *
+   * @typeParam TContext - Shape of the optional context forwarded to
+   *   `extract`. Defaults to `unknown`.
    * @param field - Name of the schema field the rule writes to.
-   * @param extract - Callback that inspects the content and proposes a value.
+   * @param extract - Callback that inspects the content (and optional context)
+   *   and proposes a value.
    * @param options - Optional rule metadata. `id` is surfaced in
    *   `ExtractionResult.sources` when this rule produces the kept value;
    *   defaults to `${field}#${declarationIndex}`.
    * @returns An {@link ExtractionRule} ready to be passed to {@link rule.apply}.
    */
-  create(
+  create<TContext = unknown>(
     field: string,
-    extract: (content: string) => RuleMatch<unknown> | null,
+    extract: (content: string, context?: TContext) => RuleMatch<unknown> | null,
     options?: { id?: string },
-  ): ExtractionRule {
+  ): ExtractionRule<TContext> {
     return options?.id !== undefined ? { id: options.id, field, extract } : { field, extract };
   },
 
@@ -92,18 +97,27 @@ export const rule = {
    * - Values failing the per-field Zod `safeParse` are discarded and the
    *   field falls back to `missing`. An optional logger receives a warning.
    *
+   * The optional `context` is forwarded verbatim to every rule's `extract`
+   * callback. Rules that declare a narrower `ExtractionRule<TContext>` than
+   * the one passed here still compile thanks to contextual parameter
+   * contravariance; rules that ignore `context` keep working unchanged.
+   *
    * @typeParam S - A Zod object schema.
+   * @typeParam TContext - Shape of the optional context forwarded to rules.
    * @param content - Raw content to extract from (typically markdown or text).
    * @param rules - Deterministic rules to evaluate.
    * @param schema - Zod object schema describing the target data shape.
    * @param logger - Optional logger notified when a value is rejected.
+   * @param context - Optional caller-defined value forwarded to every rule's
+   *   `extract` callback. Left `undefined` when omitted.
    * @returns The deterministic extraction result (values, confidence, missing).
    */
-  apply<S extends z.ZodObject<z.ZodRawShape>>(
+  apply<S extends z.ZodObject<z.ZodRawShape>, TContext = unknown>(
     content: string,
-    rules: ExtractionRule[],
+    rules: ExtractionRule<TContext>[],
     schema: S,
     logger?: Logger,
+    context?: TContext,
   ): RulesResult<z.infer<S>> {
     type Data = z.infer<S>;
     const schemaKeys = Object.keys(schema.shape) as (keyof Data)[];
@@ -117,7 +131,7 @@ export const rule = {
       if (!schemaKeys.includes(field)) {
         continue;
       }
-      const match = candidate.extract(content);
+      const match = candidate.extract(content, context);
       if (match === null) {
         continue;
       }

@@ -8,7 +8,7 @@ import {
   orderLlmValues,
 } from '../fixtures/order.fixture.js';
 
-describe('createExtractor — end-to-end on a realistic Order fixture', () => {
+describe('createExtractor - end-to-end on a realistic Order fixture', () => {
   it('extracts the four rule-covered fields in rules-only mode and reports the rest as missing', () => {
     const extractor = createExtractor({ schema: orderSchema, rules: orderRules });
 

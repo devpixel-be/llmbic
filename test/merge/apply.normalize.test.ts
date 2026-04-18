@@ -12,7 +12,7 @@ type Rectangle = z.infer<typeof rectangleSchema>;
 
 const content = 'Rectangle 150x80 cm, oversized entry in the catalog.';
 
-describe('merge.apply — normalizers', () => {
+describe('merge.apply - normalizers', () => {
   it('applies a single normalizer that clamps a field before returning the result', () => {
     const rulesResult: RulesResult<Rectangle> = {
       values: { width: 150, height: 80 },

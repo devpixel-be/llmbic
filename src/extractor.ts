@@ -68,15 +68,20 @@ function stampDuration<T>(
  * is parsed with {@link prompt.parse} and fused through {@link merge.apply}.
  *
  * @typeParam S - A Zod object schema describing the target data shape.
+ * @typeParam TContext - Shape of the optional per-call context forwarded to
+ *   every rule's `extract` callback. Defaults to `unknown`.
  * @param config - Schema, deterministic rules, and optional LLM fallback,
  *   plus `policy`, `normalizers`, `validators` and `logger` forwarded to
  *   every internal {@link merge.apply} call. The logger is also forwarded
  *   to {@link rule.apply} so schema-rejection warnings stay visible.
  * @returns An {@link Extractor} bound to `config.schema`.
  */
-export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
-  config: ExtractorConfig<S>,
-): Extractor<z.infer<S>> {
+export function createExtractor<
+  S extends z.ZodObject<z.ZodRawShape>,
+  TContext = unknown,
+>(
+  config: ExtractorConfig<S, TContext>,
+): Extractor<z.infer<S>, TContext> {
   type Data = z.infer<S>;
   const allFields = Object.keys(config.schema.shape) as (keyof Data)[];
 
@@ -99,9 +104,9 @@ export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
   };
 
   return {
-    async extract(content) {
+    async extract(content, context) {
       const startedAt = performance.now();
-      const rulesResult = rule.apply(content, config.rules, config.schema, config.logger);
+      const rulesResult = rule.apply(content, config.rules, config.schema, config.logger, context);
       const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions);
 
       const shouldCallLlm =
@@ -130,9 +135,9 @@ export function createExtractor<S extends z.ZodObject<z.ZodRawShape>>(
       return stampDuration(final, startedAt);
     },
 
-    extractSync(content) {
+    extractSync(content, context) {
       const startedAt = performance.now();
-      const rulesResult = rule.apply(content, config.rules, config.schema, config.logger);
+      const rulesResult = rule.apply(content, config.rules, config.schema, config.logger, context);
       const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions);
       return stampDuration(partial, startedAt);
     },

@@ -21,7 +21,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('createExtractor — meta.durationMs', () => {
+describe('createExtractor - meta.durationMs', () => {
   it('populates meta.durationMs on extractSync with the wall-clock spent in the call', () => {
     vi.spyOn(performance, 'now')
       .mockReturnValueOnce(1000)

@@ -13,7 +13,7 @@ type Rectangle = z.infer<typeof rectangleSchema>;
 
 const content = 'Rectangle with a negative width flagged by QA.';
 
-describe('merge.apply — validators', () => {
+describe('merge.apply - validators', () => {
   it('marks the result invalid when a validator with severity `error` produces a violation', () => {
     const rulesResult: RulesResult<Rectangle> = {
       values: { width: -10, height: 50 },

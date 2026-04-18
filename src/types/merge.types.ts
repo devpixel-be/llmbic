@@ -51,10 +51,10 @@ export type MergeApplyOptions<T> = {
 /**
  * Strategy applied when the rule and the LLM disagree on a field value.
  *
- * - `'flag'` — keep the rule value, lower its confidence, and record a
+ * - `'flag'` - keep the rule value, lower its confidence, and record a
  *   {@link Conflict} so the caller can review the disagreement.
- * - `'prefer-rule'` — silently keep the rule value and its confidence.
- * - `'prefer-llm'` — silently keep the LLM value and the default LLM
+ * - `'prefer-rule'` - silently keep the rule value and its confidence.
+ * - `'prefer-llm'` - silently keep the LLM value and the default LLM
  *   confidence.
  */
 export type ConflictStrategy = 'flag' | 'prefer-rule' | 'prefer-llm';

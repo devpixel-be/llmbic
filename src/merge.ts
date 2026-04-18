@@ -45,7 +45,7 @@ function fuseAllFields<T>(
 
   for (const field of schemaKeys) {
     const hasRuleValue = field in rulesResult.values;
-    // hasRuleValue implies confidence[field] is defined — rule.apply only writes
+    // hasRuleValue implies confidence[field] is defined - rule.apply only writes
     // to `confidence` when it also writes to `values`.
     const ruleMatch: RuleMatch<unknown> | null = hasRuleValue
       ? {
@@ -226,7 +226,7 @@ export const merge = {
    * @param field - Name of the field being merged.
    * @param ruleMatch - Value proposed by a deterministic rule, or `null` if none.
    * @param llmValue - Value proposed by the LLM, or `null` if none. Cast to `T`
-   *   without runtime type-check — callers that expose `merge.field` via
+   *   without runtime type-check - callers that expose `merge.field` via
    *   `merge.apply` rely on the final Zod re-validation to reject invalid LLM values.
    * @param policy - Optional strategy and confidence overrides.
    * @param logger - Optional logger notified of unexpected runtime situations
@@ -310,7 +310,7 @@ export const merge = {
    * Passing `llmResult = null` runs in rules-only mode: every field keeps
    * whatever the rules produced and `meta.llmCalled` is `false`.
    *
-   * Orchestration only — the three phases (fusion, normalization, validation)
+   * Orchestration only - the three phases (fusion, normalization, validation)
    * each live in their own private helper above.
    *
    * Runtime fields of `meta` (`durationMs`, `tokensUsed`) are populated by
