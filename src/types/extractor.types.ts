@@ -79,8 +79,13 @@ export type ExtractorConfig<
   rules: ExtractionRule<TContext>[];
   /** Optional LLM fallback invoked for fields the rules could not produce. */
   llm?: ExtractorLlmConfig;
-  /** Post-merge transformations, forwarded to every `merge.apply` call. */
-  normalizers?: Normalizer<z.infer<S>>[];
+  /**
+   * Post-merge transformations, forwarded to every `merge.apply` call.
+   * Normalizers share the extractor's `TContext`, so they can read the same
+   * per-call context as the rules (see
+   * {@link Extractor.extract} / {@link Extractor.extractSync} / {@link Extractor.merge}).
+   */
+  normalizers?: Normalizer<z.infer<S>, TContext>[];
   /** Invariants checked on the normalized data; populate `result.validation`. */
   validators?: Validator<ExtractedData<z.infer<S>>>[];
   /** Overrides for the per-field merge policy (conflict strategy, confidences, compare). */
@@ -137,12 +142,14 @@ export type Extractor<T, TContext = unknown> = {
   /**
    * Merge a previously-obtained `partial` with an LLM result to produce the
    * final {@link ExtractionResult}. Reuses the per-field values, confidence
-   * and provenance already carried by `partial`: the deterministic rules are
-   * not re-evaluated, so no `context` parameter is accepted here.
+   * and provenance already carried by `partial` - the deterministic rules are
+   * not re-evaluated. Normalizers still run here, so an optional `context` is
+   * accepted and forwarded verbatim to every normalizer that declares one.
    */
   merge(
     partial: ExtractionResult<T>,
     llmResult: LlmResult,
     content: string,
+    context?: TContext,
   ): ExtractionResult<T>;
 };

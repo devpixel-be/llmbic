@@ -290,7 +290,7 @@ await extractor.extract('Listed at £42', { region: 'uk' });
 // -> { price: '42' }
 ```
 
-The type parameter on `rule.create<TContext>` flows to the generic on `createExtractor<Schema, TContext>` and is enforced at every call site. `context` is forwarded verbatim to every rule's `extract` callback; rules that ignore the argument still compile and work. `extractSync(content, context?)` behaves the same way for batch workflows. `Extractor.merge` reuses the partial's values and does not re-evaluate rules, so it takes no `context`.
+The type parameter on `rule.create<TContext>` flows to the generic on `createExtractor<Schema, TContext>` and is enforced at every call site. `context` is forwarded verbatim to every rule's `extract` callback AND to every normalizer as their optional third argument; callbacks that ignore it still compile and work. `extractSync(content, context?)` behaves the same way for batch workflows. `Extractor.merge(partial, llmResult, content, context?)` does not re-evaluate rules (it reuses the partial's values) but normalizers still run, so it accepts the same optional `context`.
 
 ### Rich schemas
 
@@ -303,21 +303,34 @@ The JSON Schema handed to the LLM supports the Zod constructs that show up in re
 
 ### Normalizers
 
-Post-merge transformations. Run in sequence, receive the merged data + original content:
+Post-merge transformations. Run in sequence, receive the merged data + original content, and optionally the same per-call `context` the rules see (see [Per-call context](#per-call-context)):
 
 ```typescript
-const extractor = createExtractor({
+type Ctx = { sourceUrl: string };
+
+const extractor = createExtractor<typeof MySchema, Ctx>({
   schema: MySchema,
   rules: [...],
   normalizers: [
     (data, content) => {
-      // Fix a known data quality issue
+      // Rules/content-only normalizer: no context needed
       if (data.price && data.price < 100) data.price = null;
+      return data;
+    },
+    (data, _content, context) => {
+      // Context-aware: cross-field fix-up that depends on where the content came from
+      if (context && !data.city && /\/liege\//.test(context.sourceUrl)) {
+        data.city = 'Liège';
+      }
       return data;
     },
   ],
 });
+
+await extractor.extract(markdown, { sourceUrl: 'https://example.be/liege/123' });
 ```
+
+Context-unaware normalizers keep working unchanged - the third argument is optional and left `undefined` when the caller passes no context.
 
 ### Validators (invariants)
 
@@ -474,7 +487,7 @@ Creates an extractor instance. Signature: `createExtractor<S, TContext = unknown
 | `schema` | `ZodObject` | yes | Output schema (drives field enumeration and re-validation). |
 | `rules` | `ExtractionRule<TContext>[]` | yes | Deterministic extraction rules. |
 | `llm` | `ExtractorLlmConfig` | no | LLM fallback. Omit for rules-only mode. See below. |
-| `normalizers` | `Normalizer<T>[]` | no | Post-merge transformations, run in declared order. |
+| `normalizers` | `Normalizer<T, TContext>[]` | no | Post-merge transformations, run in declared order. Each normalizer receives `(data, content, context?)`; `TContext` is shared with the rules array. |
 | `validators` | `Validator<ExtractedData<T>>[]` | no | Invariants populating `result.validation`. |
 | `policy` | `Partial<FieldMergePolicy>` | no | Overrides the per-field merge policy (conflict strategy, confidence defaults, equality) for every field. |
 | `policyByField` | `{ [K in keyof T]?: Partial<FieldMergePolicy> }` | no | Per-field overrides applied on top of `policy`. Precedence: defaults < `policy` < `policyByField[field]`. |
@@ -517,7 +530,7 @@ Binding `T` once lets TypeScript infer each field's type from the field name, so
 | `extractSync(content, context?)` | sync | Rules only. Returns the partial result + `missing` fields. `context` is forwarded verbatim to every rule's `extract` callback. |
 | `prompt(content, partial)` | sync | Builds the LLM request. Covers `partial.missing` in fill-gaps mode, every schema field in cross-check mode. |
 | `parse(raw)` | sync | Parses a raw LLM JSON response, validating each field individually. Never throws. |
-| `merge(partial, llmResult, content)` | sync | Merges rules + LLM, detects conflicts, normalizes, validates. Does not re-evaluate rules, so takes no `context`. |
+| `merge(partial, llmResult, content, context?)` | sync | Merges rules + LLM, detects conflicts, normalizes, validates. Does not re-evaluate rules, but normalizers still run and receive `context` verbatim. |
 
 ## License
 

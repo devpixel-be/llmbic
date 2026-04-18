@@ -130,16 +130,19 @@ function deriveSource(
 /**
  * Apply every configured {@link Normalizer} to the merged data in declared
  * order. Normalizers may mutate their argument; the returned reference is
- * what the rest of the pipeline observes.
+ * what the rest of the pipeline observes. The caller-provided `context` is
+ * forwarded verbatim to every normalizer (left `undefined` when the caller
+ * passed none).
  */
-function runNormalizers<T>(
+function runNormalizers<T, TContext>(
   data: ExtractedData<T>,
-  normalizers: Normalizer<T>[] | undefined,
+  normalizers: Normalizer<T, TContext>[] | undefined,
   content: string,
+  context: TContext | undefined,
 ): ExtractedData<T> {
   let current = data;
   for (const normalizer of normalizers ?? []) {
-    current = normalizer(current, content);
+    current = normalizer(current, content, context);
   }
   return current;
 }
@@ -317,18 +320,22 @@ export const merge = {
    * later slices; for now `durationMs` is `0`.
    *
    * @typeParam S - A Zod object schema.
+   * @typeParam TContext - Shape of the optional context forwarded to every
+   *   normalizer. Defaults to `unknown`.
    * @param schema - Zod object schema describing the target data shape.
    * @param rulesResult - Output of {@link rule.apply} for the same schema.
    * @param llmResult - Parsed LLM response, or `null` for rules-only mode.
    * @param content - Original text the rules and LLM were derived from; forwarded to normalizers so they can cross-reference the source.
    * @param options - Optional behavior overrides (policy, normalizers, validators, logger).
+   * @param context - Optional caller-defined value forwarded to every normalizer's third argument. Left `undefined` when omitted.
    */
-  apply<S extends z.ZodObject<z.ZodRawShape>>(
+  apply<S extends z.ZodObject<z.ZodRawShape>, TContext = unknown>(
     schema: S,
     rulesResult: RulesResult<z.infer<S>>,
     llmResult: LlmResult | null,
     content: string,
-    options?: MergeApplyOptions<z.infer<S>>,
+    options?: MergeApplyOptions<z.infer<S>, TContext>,
+    context?: TContext,
   ): ExtractionResult<z.infer<S>> {
     type Data = z.infer<S>;
     const schemaKeys = Object.keys(schema.shape) as (keyof Data)[];
@@ -342,7 +349,7 @@ export const merge = {
       options?.logger,
     );
 
-    const normalized = runNormalizers(fusion.data, options?.normalizers, content);
+    const normalized = runNormalizers(fusion.data, options?.normalizers, content, context);
 
     const violations = collectViolations<Data>(
       schema,

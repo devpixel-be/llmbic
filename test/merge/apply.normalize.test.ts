@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { merge } from '../../src/merge.js';
 import type { RulesResult } from '../../src/types/rule.types.js';
@@ -84,5 +84,82 @@ describe('merge.apply - normalizers', () => {
     expect(result.data).toEqual({ width: 42, height: 80 });
     expect(result.validation.valid).toBe(true);
     expect(result.validation.violations).toEqual([]);
+  });
+});
+
+describe('merge.apply - normalizer context', () => {
+  type Unit = { unit: 'cm' | 'mm' };
+
+  const rulesResult: RulesResult<Rectangle> = {
+    values: { width: 10, height: 20 },
+    confidence: { width: 1.0, height: 1.0 },
+    missing: [],
+  };
+
+  it('forwards the context verbatim to every normalizer', () => {
+    const normalizer = vi.fn<Normalizer<Rectangle, Unit>>((data) => data);
+
+    merge.apply<typeof rectangleSchema, Unit>(
+      rectangleSchema,
+      rulesResult,
+      null,
+      content,
+      { normalizers: [normalizer] },
+      { unit: 'mm' },
+    );
+
+    expect(normalizer).toHaveBeenCalledTimes(1);
+    expect(normalizer).toHaveBeenCalledWith(
+      { width: 10, height: 20 },
+      content,
+      { unit: 'mm' },
+    );
+  });
+
+  it('lets a context-aware normalizer branch on the caller-provided value', () => {
+    const scaleToMm: Normalizer<Rectangle, Unit> = (data, _content, context) => {
+      if (context?.unit === 'mm' && data.width !== null) {
+        data.width = data.width * 10;
+      }
+      return data;
+    };
+
+    const mmResult = merge.apply<typeof rectangleSchema, Unit>(
+      rectangleSchema,
+      rulesResult,
+      null,
+      content,
+      { normalizers: [scaleToMm] },
+      { unit: 'mm' },
+    );
+    const cmResult = merge.apply<typeof rectangleSchema, Unit>(
+      rectangleSchema,
+      rulesResult,
+      null,
+      content,
+      { normalizers: [scaleToMm] },
+      { unit: 'cm' },
+    );
+
+    expect(mmResult.data.width).toBe(100);
+    expect(cmResult.data.width).toBe(10);
+  });
+
+  it('leaves context undefined on normalizer calls when the caller passes none (back-compat)', () => {
+    const normalizer = vi.fn<Normalizer<Rectangle, Unit>>((data) => data);
+
+    merge.apply<typeof rectangleSchema, Unit>(
+      rectangleSchema,
+      rulesResult,
+      null,
+      content,
+      { normalizers: [normalizer] },
+    );
+
+    expect(normalizer).toHaveBeenCalledWith(
+      { width: 10, height: 20 },
+      content,
+      undefined,
+    );
   });
 });

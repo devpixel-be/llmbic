@@ -17,11 +17,22 @@ export type ExtractedData<T> = { [K in keyof T]: T[K] | null };
  * and return the updated data. They are allowed to mutate their input; the
  * merge pipeline shallow-copies once before invoking them.
  *
+ * Normalizers can optionally accept a `context` argument: an opaque,
+ * caller-defined value forwarded verbatim by `merge.apply` /
+ * `Extractor.extract` - the same per-call context the extractor's rules
+ * receive. Typical use is to gate cross-field fix-ups on tenant-specific
+ * configuration (e.g. a source URL, a feature flag). `TContext` defaults to
+ * `unknown` so context-unaware normalizers stay assignable to arrays typed
+ * with any context.
+ *
  * @typeParam T - Non-null target shape the extraction is aiming for.
+ * @typeParam TContext - Shape of the optional per-call context forwarded to
+ *   the normalizer. Defaults to `unknown`.
  */
-export type Normalizer<T> = (
+export type Normalizer<T, TContext = unknown> = (
   data: ExtractedData<T>,
   content: string,
+  context?: TContext,
 ) => ExtractedData<T>;
 
 /**
@@ -30,8 +41,10 @@ export type Normalizer<T> = (
  * validators.
  *
  * @typeParam T - Non-null target shape (`z.infer<Schema>`).
+ * @typeParam TContext - Shape of the optional per-call context forwarded to
+ *   every normalizer. Defaults to `unknown`.
  */
-export type MergeApplyOptions<T> = {
+export type MergeApplyOptions<T, TContext = unknown> = {
   /** Overrides forwarded to every field-level fusion call. */
   policy?: Partial<FieldMergePolicy>;
   /**
@@ -41,7 +54,7 @@ export type MergeApplyOptions<T> = {
    */
   policyByField?: { [K in keyof T]?: Partial<FieldMergePolicy> };
   /** Transformations run in declared order after the per-field fusion. */
-  normalizers?: Normalizer<T>[];
+  normalizers?: Normalizer<T, TContext>[];
   /** Invariants run on the normalized data; their violations populate `validation`. */
   validators?: Validator<ExtractedData<T>>[];
   /** Logger propagated through the pipeline for warnings and fallbacks. */

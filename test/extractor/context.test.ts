@@ -5,6 +5,7 @@ import { rule } from '../../src/rules.js';
 import type { LlmProvider } from '../../src/types/provider.types.js';
 import type { ExtractorLlmConfig } from '../../src/types/extractor.types.js';
 import type { RuleMatch } from '../../src/types/rule.types.js';
+import type { ExtractionResult, Normalizer } from '../../src/types/merge.types.js';
 
 type Region = { region: 'us' | 'uk' };
 
@@ -65,5 +66,66 @@ describe('createExtractor: context forwarding', () => {
 
     expect(extract).toHaveBeenCalledWith(CONTENT, { region: 'uk' });
     expect(provider.complete).not.toHaveBeenCalled();
+  });
+});
+
+describe('createExtractor: normalizer context forwarding', () => {
+  it('forwards context through extract() to every normalizer', async () => {
+    const normalizer = vi.fn<Normalizer<{ price: string }, Region>>((data) => data);
+    const extractor = createExtractor<typeof priceSchema, Region>({
+      schema: priceSchema,
+      rules: [rule.create<Region>('price', () => rule.confidence('ok', 1))],
+      normalizers: [normalizer],
+    });
+
+    await extractor.extract(CONTENT, { region: 'uk' });
+
+    expect(normalizer).toHaveBeenCalledTimes(1);
+    expect(normalizer).toHaveBeenCalledWith({ price: 'ok' }, CONTENT, { region: 'uk' });
+  });
+
+  it('forwards context through extractSync() to every normalizer', () => {
+    const normalizer = vi.fn<Normalizer<{ price: string }, Region>>((data) => data);
+    const extractor = createExtractor<typeof priceSchema, Region>({
+      schema: priceSchema,
+      rules: [rule.create<Region>('price', () => rule.confidence('ok', 1))],
+      normalizers: [normalizer],
+    });
+
+    extractor.extractSync(CONTENT, { region: 'us' });
+
+    expect(normalizer).toHaveBeenCalledWith({ price: 'ok' }, CONTENT, { region: 'us' });
+  });
+
+  it('forwards context through extractor.merge() to normalizers (rules not re-evaluated, normalizers still run)', () => {
+    const ruleExtract = vi.fn(() => rule.confidence('ok', 1));
+    const normalizer = vi.fn<Normalizer<{ price: string }, Region>>((data) => data);
+    const extractor = createExtractor<typeof priceSchema, Region>({
+      schema: priceSchema,
+      rules: [rule.create<Region>('price', ruleExtract)],
+      normalizers: [normalizer],
+    });
+
+    const partial: ExtractionResult<{ price: string }> = extractor.extractSync(CONTENT, { region: 'uk' });
+    ruleExtract.mockClear();
+    normalizer.mockClear();
+
+    extractor.merge(partial, { values: {} }, CONTENT, { region: 'us' });
+
+    expect(ruleExtract).not.toHaveBeenCalled();
+    expect(normalizer).toHaveBeenCalledWith({ price: 'ok' }, CONTENT, { region: 'us' });
+  });
+
+  it('leaves normalizer context undefined when the caller passes none (back-compat)', async () => {
+    const normalizer = vi.fn<Normalizer<{ price: string }, Region>>((data) => data);
+    const extractor = createExtractor<typeof priceSchema, Region>({
+      schema: priceSchema,
+      rules: [rule.create<Region>('price', () => rule.confidence('ok', 1))],
+      normalizers: [normalizer],
+    });
+
+    await extractor.extract(CONTENT);
+
+    expect(normalizer).toHaveBeenCalledWith({ price: 'ok' }, CONTENT, undefined);
   });
 });

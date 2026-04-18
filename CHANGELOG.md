@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-04-18
+
+Non-breaking. Normalizers can now read the same caller-provided `context` the rules see, so post-merge cross-field fix-ups no longer have to be closed over at extractor-declaration time. Typical use: a normalizer that reconciles extracted fields against the `sourceUrl` or per-tenant configuration passed to `extract`.
+
+### Added
+
+- `Normalizer<T, TContext = unknown>` - second optional generic type parameter describing the shape of the per-call context forwarded to the normalizer's third argument. Defaults to `unknown`, so context-unaware normalizers and legacy code compile unchanged.
+- `Normalizer(data, content, context?)` - third optional argument, left `undefined` when the caller passes no context.
+- `MergeApplyOptions<T, TContext = unknown>` - second optional generic parameter shared with `Normalizer`, surfacing as `normalizers?: Normalizer<T, TContext>[]`.
+- `merge.apply<S, TContext>(schema, rulesResult, llmResult, content, options?, context?)` - sixth optional argument forwarded verbatim to every normalizer.
+- `ExtractorConfig<S, TContext>.normalizers` now types as `Normalizer<z.infer<S>, TContext>[]`, so the context flowing through rules reaches normalizers with the same compile-time shape.
+- `Extractor.merge(partial, llmResult, content, context?)` - fourth optional argument. Rules are still not re-evaluated, but normalizers run here too; accepting `context` keeps them consistent with `Extractor.extract` / `Extractor.extractSync`.
+
 ## [1.3.0] - 2026-04-18
 
 Non-breaking. Rules can now read a caller-provided `context` object alongside `content`, so per-call metadata (locale, tenant configuration, feature flags) no longer has to be captured in rule closures at declaration time.

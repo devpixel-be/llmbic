@@ -95,7 +95,7 @@ export function createExtractor<
     crossCheckHints: config.llm?.crossCheckHints ?? 'unbiased',
   } as const;
 
-  const mergeOptions: MergeApplyOptions<Data> = {
+  const mergeOptions: MergeApplyOptions<Data, TContext> = {
     policy: config.policy,
     policyByField: config.policyByField,
     normalizers: config.normalizers,
@@ -107,7 +107,7 @@ export function createExtractor<
     async extract(content, context) {
       const startedAt = performance.now();
       const rulesResult = rule.apply(content, config.rules, config.schema, config.logger, context);
-      const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions);
+      const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions, context);
 
       const shouldCallLlm =
         config.llm !== undefined &&
@@ -131,14 +131,14 @@ export function createExtractor<
       const llmResult = config.llm!.transformResponse
         ? await config.llm!.transformResponse(parsedLlmResult, request)
         : parsedLlmResult;
-      const final = merge.apply(config.schema, rulesResult, llmResult, content, mergeOptions);
+      const final = merge.apply(config.schema, rulesResult, llmResult, content, mergeOptions, context);
       return stampDuration(final, startedAt);
     },
 
     extractSync(content, context) {
       const startedAt = performance.now();
       const rulesResult = rule.apply(content, config.rules, config.schema, config.logger, context);
-      const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions);
+      const partial = merge.apply(config.schema, rulesResult, null, content, mergeOptions, context);
       return stampDuration(partial, startedAt);
     },
 
@@ -150,10 +150,10 @@ export function createExtractor<
       return prompt.parse(config.schema, allFields, raw);
     },
 
-    merge(partial, llmResult, content) {
+    merge(partial, llmResult, content, context) {
       const startedAt = performance.now();
       const rulesResult = rulesResultFromPartial(partial, allFields);
-      const result = merge.apply(config.schema, rulesResult, llmResult, content, mergeOptions);
+      const result = merge.apply(config.schema, rulesResult, llmResult, content, mergeOptions, context);
       return stampDuration(result, startedAt);
     },
   };
