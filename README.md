@@ -366,6 +366,32 @@ The `normalizerId` is resolved in this order:
 
 For production code, prefer `defineNormalizer` or named function expressions: ids show up in logs and audit trails, and refactors that inline / extract arrows won't silently rename them. `before` and `after` are recorded verbatim (no diffing, no deep-cloning) - interpretation is the consumer's job.
 
+##### Extra-schema mutations
+
+The diff covers every key present in the data object before or after each normalizer pass, not just fields declared in the Zod schema. That covers llmbic's documented "derived fields" escape hatch - normalizers can attach computed keys to the same data blob (they're not sent to the LLM, they're carried alongside the extraction):
+
+```typescript
+const extractor = createExtractor({
+  schema: RectangleSchema,
+  rules: [...],
+  normalizers: [
+    function attachArea(data) {
+      if (data.width !== null && data.height !== null) {
+        (data as Record<string, unknown>).area = data.width * data.height;
+      }
+      return data;
+    },
+  ],
+});
+
+const result = await extractor.extract('Rectangle 150x80 cm.');
+
+result.normalizerMutations;
+// [{ normalizerId: 'attachArea', field: 'area', before: undefined, after: 12000, step: 0 }]
+```
+
+Addition, mutation and deletion are all tracked: a key absent before and present after emits `before: undefined`; a key present before and absent after emits `after: undefined`. `NormalizerMutation.field` is typed as `keyof T | string` to reflect the widening - code that narrows on schema fields can still do so with `field in schema.shape` at read time.
+
 ### Validators (invariants)
 
 Check the final output for logical consistency:

@@ -1,6 +1,6 @@
 {
   "name": "llmbic",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Hybrid data extraction — deterministic rules + LLM fallback, with per-field confidence scoring.",
   "type": "module",
   "license": "MIT",

@@ -132,39 +132,53 @@ function deriveSource(
 
 /**
  * Apply every configured {@link Normalizer} to the merged data in declared
- * order and track per-field mutations along the way. Normalizers may mutate
+ * order and track per-key mutations along the way. Normalizers may mutate
  * their argument; the returned reference is what the rest of the pipeline
  * observes. The caller-provided `context` is forwarded verbatim to every
  * normalizer (left `undefined` when the caller passed none).
  *
- * For each normalizer, every schema field is snapshotted, the normalizer is
- * invoked, and each field whose value changed is recorded as a
- * {@link NormalizerMutation}. Equality is structural (see `valueEquals`) so
- * an arrow that returns `{ ...data, x: x }` without actually changing any
- * value does not generate spurious entries.
+ * For each normalizer, a shallow snapshot of the incoming object is taken,
+ * the normalizer is invoked, and the diff is computed over the union of
+ * keys present in either snapshot - covering both schema fields and the
+ * extra-schema "derived field" keys llmbic tolerates at runtime. Keys added
+ * by the normalizer surface as `before: undefined`; keys deleted surface
+ * as `after: undefined`. Equality is structural (see `valueEquals`) so an
+ * arrow that returns `{ ...data }` without actually changing any value
+ * does not generate spurious entries.
  */
 function runNormalizers<T, TContext>(
   data: ExtractedData<T>,
   normalizers: Normalizer<T, TContext>[] | undefined,
   content: string,
   context: TContext | undefined,
-  schemaFields: readonly (keyof T)[],
 ): { data: ExtractedData<T>; mutations: NormalizerMutation<T>[] } {
   const mutations: NormalizerMutation<T>[] = [];
   let current = data;
   const list = normalizers ?? [];
+
   for (let step = 0; step < list.length; step++) {
     const normalizer = list[step]!;
-    const before: Partial<Record<keyof T, unknown>> = {};
-    for (const field of schemaFields) {
-      before[field] = current[field];
-    }
+    const beforeSnapshot = { ...(current as Record<string, unknown>) };
     current = normalizer(current, content, context);
     const normalizerId = resolveNormalizerId(normalizer);
-    for (const field of schemaFields) {
-      const after = current[field];
-      if (!valueEquals(before[field], after)) {
-        mutations.push({ normalizerId, field, before: before[field], after, step });
+
+    const afterRecord = current as Record<string, unknown>;
+    const allKeys = new Set<string>([
+      ...Object.keys(beforeSnapshot),
+      ...Object.keys(afterRecord),
+    ]);
+
+    for (const key of allKeys) {
+      const before = beforeSnapshot[key];
+      const after = afterRecord[key];
+      if (!valueEquals(before, after)) {
+        mutations.push({
+          normalizerId,
+          field: key as keyof T | string,
+          before,
+          after,
+          step,
+        });
       }
     }
   }
@@ -378,7 +392,6 @@ export const merge = {
       options?.normalizers,
       content,
       context,
-      schemaKeys,
     );
 
     const violations = collectViolations<Data>(

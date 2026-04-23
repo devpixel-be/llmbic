@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-04-23
+
+Non-breaking. `normalizerMutations` now tracks the full surface of what a normalizer wrote to the data object, including extra-schema "derived field" keys. The 1.5.0 diff was scoped to schema fields only, which defeated the provenance-for-every-write promise whenever a normalizer attached a computed field outside the Zod schema.
+
+### Added
+
+- Extra-schema mutation tracking. `runNormalizers` now diffs the union of keys present in the incoming and outgoing object, so keys added, mutated, or deleted by a normalizer all show up in `result.normalizerMutations` - even when the key is not declared in the extractor's Zod schema. Added keys surface with `before: undefined`; deleted keys surface with `after: undefined`. Structural equality (unchanged from 1.5.0) still suppresses no-op rewrites.
+
+### Changed
+
+- `NormalizerMutation<T>.field` widened from `keyof T` to `keyof T | string`. `keyof T | string` collapses to `string` at runtime for object types - non-breaking for consumers that treat `field` as a string (audit log, `JSON.stringify`, group-by). Consumers that narrowed on `keyof T` can still do so with a runtime `field in schema.shape` check.
+
 ## [1.5.0] - 2026-04-23
 
 Non-breaking. Normalizer mutations now show up in `ExtractionResult` as a dedicated, ordered list so callers can audit exactly what each post-fusion transformation did: which field, which normalizer, before-and-after values. Complements `sources[field]` (which still describes the post-fusion origin) - the two are orthogonal signals.

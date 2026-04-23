@@ -166,11 +166,18 @@ export type NormalizerMutation<T> = {
    * stable id to an arrow function.
    */
   normalizerId: string;
-  /** Schema field whose value changed. */
-  field: keyof T;
-  /** Value observed by the normalizer for that field. */
+  /**
+   * Key whose value changed. `keyof T` when the normalizer mutated a field
+   * declared in the extractor's Zod schema; a plain `string` when the
+   * mutation landed on an extra-schema key (llmbic tolerates those at
+   * runtime as a "derived fields" escape hatch - see the README
+   * "Extra-schema mutations" section). Consumers that narrow on `keyof T`
+   * can still do so with a runtime `field in schema.shape` check.
+   */
+  field: keyof T | string;
+  /** Value observed by the normalizer for that key. `undefined` when the key was newly added by this pass. */
   before: unknown;
-  /** Value the normalizer wrote for that field. */
+  /** Value the normalizer wrote for that key. `undefined` when the key was deleted by this pass. */
   after: unknown;
   /**
    * Zero-based index of the normalizer in the configured pipeline. Useful
