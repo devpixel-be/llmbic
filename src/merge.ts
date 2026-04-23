@@ -12,7 +12,10 @@ import type {
   LlmResult,
   MergeApplyOptions,
   Normalizer,
+  NormalizerMutation,
 } from './types/merge.types.js';
+import { valueEquals } from './utils/value-equals.js';
+import { resolveNormalizerId } from './utils/normalizer-id.js';
 
 type FusionOutcome<T> = {
   data: ExtractedData<T>;
@@ -129,22 +132,43 @@ function deriveSource(
 
 /**
  * Apply every configured {@link Normalizer} to the merged data in declared
- * order. Normalizers may mutate their argument; the returned reference is
- * what the rest of the pipeline observes. The caller-provided `context` is
- * forwarded verbatim to every normalizer (left `undefined` when the caller
- * passed none).
+ * order and track per-field mutations along the way. Normalizers may mutate
+ * their argument; the returned reference is what the rest of the pipeline
+ * observes. The caller-provided `context` is forwarded verbatim to every
+ * normalizer (left `undefined` when the caller passed none).
+ *
+ * For each normalizer, every schema field is snapshotted, the normalizer is
+ * invoked, and each field whose value changed is recorded as a
+ * {@link NormalizerMutation}. Equality is structural (see `valueEquals`) so
+ * an arrow that returns `{ ...data, x: x }` without actually changing any
+ * value does not generate spurious entries.
  */
 function runNormalizers<T, TContext>(
   data: ExtractedData<T>,
   normalizers: Normalizer<T, TContext>[] | undefined,
   content: string,
   context: TContext | undefined,
-): ExtractedData<T> {
+  schemaFields: readonly (keyof T)[],
+): { data: ExtractedData<T>; mutations: NormalizerMutation<T>[] } {
+  const mutations: NormalizerMutation<T>[] = [];
   let current = data;
-  for (const normalizer of normalizers ?? []) {
+  const list = normalizers ?? [];
+  for (let step = 0; step < list.length; step++) {
+    const normalizer = list[step]!;
+    const before: Partial<Record<keyof T, unknown>> = {};
+    for (const field of schemaFields) {
+      before[field] = current[field];
+    }
     current = normalizer(current, content, context);
+    const normalizerId = resolveNormalizerId(normalizer);
+    for (const field of schemaFields) {
+      const after = current[field];
+      if (!valueEquals(before[field], after)) {
+        mutations.push({ normalizerId, field, before: before[field], after, step });
+      }
+    }
   }
-  return current;
+  return { data: current, mutations };
 }
 
 /**
@@ -349,22 +373,29 @@ export const merge = {
       options?.logger,
     );
 
-    const normalized = runNormalizers(fusion.data, options?.normalizers, content, context);
+    const normalized = runNormalizers(
+      fusion.data,
+      options?.normalizers,
+      content,
+      context,
+      schemaKeys,
+    );
 
     const violations = collectViolations<Data>(
       schema,
-      normalized,
+      normalized.data,
       fusion.missing,
       options?.validators,
     );
     const valid = !violations.some((v) => v.severity === 'error');
 
     return {
-      data: normalized,
+      data: normalized.data,
       confidence: fusion.confidence,
       sources: fusion.sources,
       conflicts: fusion.conflicts,
       missing: fusion.missing,
+      normalizerMutations: normalized.mutations,
       validation: { valid, violations },
       meta: {
         rulesMatched: fusion.rulesMatched,
@@ -374,3 +405,27 @@ export const merge = {
     };
   },
 };
+
+/**
+ * Ergonomic helper to attach a stable `id` to a normalizer. Useful for arrow
+ * functions which otherwise resolve to `'anonymous'` in
+ * {@link NormalizerMutation.normalizerId}.
+ *
+ * Equivalent to `Object.assign(fn, { id })` with proper typings. The returned
+ * value is a {@link Normalizer} that wraps `apply` verbatim and carries the
+ * explicit `id`. `id` takes precedence over `fn.name` per the resolution
+ * rules of {@link resolveNormalizerId}.
+ *
+ * @typeParam T - Non-null target shape of the extraction.
+ * @typeParam TContext - Optional per-call context type. Defaults to `unknown`.
+ * @param id - Non-empty stable identifier surfaced in mutation records.
+ * @param apply - The normalizer body.
+ */
+export function defineNormalizer<T, TContext = unknown>(
+  id: string,
+  apply: Normalizer<T, TContext>,
+): Normalizer<T, TContext> {
+  const wrapped: Normalizer<T, TContext> = (data, content, context) =>
+    apply(data, content, context);
+  return Object.assign(wrapped, { id });
+}

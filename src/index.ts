@@ -12,7 +12,7 @@
 
 export { createExtractor } from './extractor.js';
 export { rule } from './rules.js';
-export { merge } from './merge.js';
+export { merge, defineNormalizer } from './merge.js';
 export { prompt } from './prompt.js';
 export { validator } from './validate.js';
 
@@ -56,5 +56,6 @@ export type {
   LlmResult,
   MergeApplyOptions,
   Normalizer,
+  NormalizerMutation,
   ValidationResult,
 } from './types/merge.types.js';

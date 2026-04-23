@@ -332,6 +332,40 @@ await extractor.extract(markdown, { sourceUrl: 'https://example.be/liege/123' })
 
 Context-unaware normalizers keep working unchanged - the third argument is optional and left `undefined` when the caller passes no context.
 
+#### Normalizer mutation tracking
+
+Every run of `merge.apply` (and therefore every `extract` / `extractSync` / `merge` call) returns a `normalizerMutations` array listing every field a normalizer rewrote, in the order it happened. Complements `sources[field]`: `sources` keeps pointing at the post-fusion origin (rule / llm / agreement / flag), `normalizerMutations` tells you what the post-fusion pass then did to the value.
+
+```typescript
+import { createExtractor, defineNormalizer } from 'llmbic';
+
+const clampPrice = defineNormalizer<Listing>('clamp-price', (data) => {
+  if (data.price !== null && data.price > 1_000_000) data.price = 1_000_000;
+  return data;
+});
+
+const extractor = createExtractor({
+  schema: ListingSchema,
+  rules: [...],
+  normalizers: [clampPrice],
+});
+
+const result = await extractor.extract(markdown);
+
+result.normalizerMutations;
+// [
+//   { normalizerId: 'clamp-price', field: 'price', before: 9_999_999, after: 1_000_000, step: 0 },
+// ]
+```
+
+The `normalizerId` is resolved in this order:
+
+1. An explicit `.id` string property on the normalizer function (set via `defineNormalizer('my-id', fn)` or `Object.assign(fn, { id: 'my-id' })`).
+2. The function's `name` - regular `function myNormalizer() {}` or `const myNormalizer = (data) => ...` pick this up for free.
+3. `'anonymous'` fallback for arrow functions declared inline without a binding.
+
+For production code, prefer `defineNormalizer` or named function expressions: ids show up in logs and audit trails, and refactors that inline / extract arrows won't silently rename them. `before` and `after` are recorded verbatim (no diffing, no deep-cloning) - interpretation is the consumer's job.
+
 ### Validators (invariants)
 
 Check the final output for logical consistency:

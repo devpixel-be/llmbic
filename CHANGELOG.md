@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-04-23
+
+Non-breaking. Normalizer mutations now show up in `ExtractionResult` as a dedicated, ordered list so callers can audit exactly what each post-fusion transformation did: which field, which normalizer, before-and-after values. Complements `sources[field]` (which still describes the post-fusion origin) - the two are orthogonal signals.
+
+### Added
+
+- `ExtractionResult.normalizerMutations: NormalizerMutation<T>[]` - one entry per `(normalizer, field)` where the field's value changed during that normalizer's pass, in the order they occurred. Empty array when no normalizers ran or none mutated any field. Enables audit, observability, and regression diagnosis on normalizer changes. Existing consumers keep working unchanged - the field is additive and its neutral value is `[]`.
+- `NormalizerMutation<T>` public type - `{ normalizerId, field, before, after, step }`. `before` / `after` are captured verbatim (no diffing, no deep-cloning); `step` is the zero-based index of the normalizer in the configured pipeline so consumers can order or group mutations produced by the same pass.
+- `defineNormalizer<T, TContext = unknown>(id, apply)` helper - attaches a stable `id` to a normalizer, useful for arrow functions which would otherwise resolve to `'anonymous'` in `NormalizerMutation.normalizerId`. Resolution order for a normalizer's id: `fn.id` (non-empty string) -> `fn.name` -> `'anonymous'`; regular named functions already pick up their name for free.
+
 ## [1.4.0] - 2026-04-18
 
 Non-breaking. Normalizers can now read the same caller-provided `context` the rules see, so post-merge cross-field fix-ups no longer have to be closed over at extractor-declaration time. Typical use: a normalizer that reconciles extracted fields against the `sourceUrl` or per-tenant configuration passed to `extract`.

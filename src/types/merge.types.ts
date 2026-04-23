@@ -146,6 +146,41 @@ export type FieldMergePolicy = {
 };
 
 /**
+ * A single mutation observed while running a {@link Normalizer}. One entry is
+ * produced per (normalizer, field) pair whose value changed during that
+ * normalizer's pass. Consumers use this signal to audit post-fusion
+ * transformations, diagnose regressions after a normalizer change, or surface
+ * "what did the pipeline actually do" in observability dashboards.
+ *
+ * `before` and `after` are recorded verbatim: no diffing, no deep-cloning,
+ * no semantic interpretation. The caller interprets them (display, JSON
+ * serialization, audit log, ...).
+ *
+ * @typeParam T - Non-null target shape the extraction is aiming for.
+ */
+export type NormalizerMutation<T> = {
+  /**
+   * Identifier of the normalizer that produced the mutation. Resolution
+   * order: `fn.id` (string property) -> `fn.name` -> `'anonymous'`. Use
+   * {@link defineNormalizer} (exported from the package root) to attach a
+   * stable id to an arrow function.
+   */
+  normalizerId: string;
+  /** Schema field whose value changed. */
+  field: keyof T;
+  /** Value observed by the normalizer for that field. */
+  before: unknown;
+  /** Value the normalizer wrote for that field. */
+  after: unknown;
+  /**
+   * Zero-based index of the normalizer in the configured pipeline. Useful
+   * when a field is mutated by several normalizers in sequence: the entry
+   * with the smallest `step` ran first.
+   */
+  step: number;
+};
+
+/**
  * Re-exported from `rule.types` so consumers building {@link FieldMergeResult}
  * or implementing a custom merge on top of {@link FieldMergePolicy} only need
  * to import from `merge.types`.
@@ -208,6 +243,16 @@ export type ExtractionResult<T> = {
   conflicts: Conflict[];
   /** Fields for which no value could be produced. */
   missing: (keyof T)[];
+  /**
+   * Mutations observed while running the configured normalizers, in the order
+   * they occurred. One entry per `(normalizer, field)` where the field's
+   * value changed. Empty when no normalizers ran or none mutated any field.
+   *
+   * Orthogonal to {@link ExtractionResult.sources}: `sources[field]` keeps
+   * pointing at the post-fusion origin even after a normalizer rewrites
+   * the value; this array is where post-fusion rewrites are tracked.
+   */
+  normalizerMutations: NormalizerMutation<T>[];
   /** Aggregate output of the validators. */
   validation: ValidationResult;
   /** Runtime metadata about this extraction. */
