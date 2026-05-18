@@ -223,7 +223,7 @@ result.conflicts;
 // [{ field: 'total', ruleValue: 1250, ruleConfidence: 1.0, llmValue: 1520 }]
 ```
 
-Three conflict strategies: `'flag'` (default - keep rule value, record conflict), `'prefer-rule'`, or `'prefer-llm'`.
+Four conflict strategies: `'flag'` (default - keep rule value, record conflict), `'prefer-rule'`, `'prefer-llm'`, and `'prefer-rule-when-confident'` (rule wins only when its confidence is at or above `ruleConfidenceThreshold`, default `1`; otherwise the LLM wins - lets a perfectly-canonical regex override a noisy LLM extraction without forcing every rule hint through).
 
 In the default `'fill-gaps'` mode the LLM is only asked about fields the rules could not resolve, so conflicts are impossible. To actually trigger conflict detection, opt into cross-check (see below).
 
@@ -239,6 +239,7 @@ const extractor = createExtractor({
   policyByField: {
     postal_code: { strategy: 'prefer-rule' },
     description: { strategy: 'prefer-llm' },
+    status: { strategy: 'prefer-rule-when-confident' }, // canonical regex beats LLM
   },
 });
 ```

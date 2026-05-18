@@ -69,8 +69,19 @@ export type MergeApplyOptions<T, TContext = unknown> = {
  * - `'prefer-rule'` - silently keep the rule value and its confidence.
  * - `'prefer-llm'` - silently keep the LLM value and the default LLM
  *   confidence.
+ * - `'prefer-rule-when-confident'` - keep the rule value when its
+ *   confidence is greater than or equal to
+ *   {@link FieldMergePolicy.ruleConfidenceThreshold} (default `1`),
+ *   otherwise keep the LLM value. Designed for fields where a
+ *   deterministic rule with a perfectly canonical pattern outranks a
+ *   noisy LLM extraction, while still letting weaker rule hints (low
+ *   confidence) defer to the LLM.
  */
-export type ConflictStrategy = 'flag' | 'prefer-rule' | 'prefer-llm';
+export type ConflictStrategy =
+  | 'flag'
+  | 'prefer-rule'
+  | 'prefer-llm'
+  | 'prefer-rule-when-confident';
 
 /**
  * Origin of the value kept for a field after fusion. Each variant carries the
@@ -143,6 +154,13 @@ export type FieldMergePolicy = {
   agreementConfidence: number;
   /** Equality check used to detect agreement between the rule and the LLM. */
   compare: FieldCompare;
+  /**
+   * Threshold consulted by the `'prefer-rule-when-confident'` strategy.
+   * When the rule's confidence is greater than or equal to this value the
+   * rule wins; otherwise the LLM wins. Ignored by every other strategy.
+   * Default `1`, meaning only a fully-confident rule overrides the LLM.
+   */
+  ruleConfidenceThreshold: number;
 };
 
 /**

@@ -250,6 +250,8 @@ export const merge = {
       }
       return a === b;
     },
+    /** See {@link FieldMergePolicy.ruleConfidenceThreshold}. */
+    ruleConfidenceThreshold: 1,
   } satisfies FieldMergePolicy,
 
   /**
@@ -319,6 +321,20 @@ export const merge = {
       };
     }
     if (fullPolicy.strategy === 'prefer-llm') {
+      return {
+        value: normalizedLlm as T,
+        confidence: fullPolicy.defaultLlmConfidence,
+        conflict: undefined,
+      };
+    }
+    if (fullPolicy.strategy === 'prefer-rule-when-confident') {
+      if (ruleMatch.confidence >= fullPolicy.ruleConfidenceThreshold) {
+        return {
+          value: ruleMatch.value,
+          confidence: ruleMatch.confidence,
+          conflict: undefined,
+        };
+      }
       return {
         value: normalizedLlm as T,
         confidence: fullPolicy.defaultLlmConfidence,

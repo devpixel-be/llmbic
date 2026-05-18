@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-05-18
+
+Non-breaking. New conflict strategy `'prefer-rule-when-confident'` lets a rule win over the LLM only when its confidence clears a configurable threshold (default `1`), otherwise the LLM wins. Designed for fields where a perfectly-canonical regex outranks a noisy LLM extraction, while weaker rule hints still defer to the LLM. Closes the gap between `'prefer-rule'` (always trust the rule) and `'prefer-llm'` (always trust the LLM).
+
+### Added
+
+- `'prefer-rule-when-confident'` value on `ConflictStrategy`. Behavior on disagreement: keep the rule value with its confidence when `ruleMatch.confidence >= policy.ruleConfidenceThreshold`; otherwise keep the LLM value with `defaultLlmConfidence`. Agreement, rule-only, and LLM-only paths are identical to the other strategies. `FieldSource` resolves to `kind: 'rule'` when the rule wins, `kind: 'llm'` when the LLM wins.
+- `FieldMergePolicy.ruleConfidenceThreshold: number` - threshold consulted by the new strategy. Default `1`. Ignored by every other strategy. Overridable per field via `policyByField`. Added to `merge.defaultFieldPolicy` so consumers can reference `merge.defaultFieldPolicy.ruleConfidenceThreshold`.
+
 ## [1.6.0] - 2026-04-23
 
 Non-breaking. `normalizerMutations` now tracks the full surface of what a normalizer wrote to the data object, including extra-schema "derived field" keys. The 1.5.0 diff was scoped to schema fields only, which defeated the provenance-for-every-write promise whenever a normalizer attached a computed field outside the Zod schema.

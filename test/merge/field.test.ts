@@ -137,4 +137,96 @@ describe('merge.field', () => {
       conflict: undefined,
     });
   });
+
+  describe('prefer-rule-when-confident', () => {
+    it('keeps the rule value when confidence equals the default threshold of 1', () => {
+      const result = merge.field(
+        'status',
+        { value: 'sold', confidence: 1 },
+        'available',
+        { strategy: 'prefer-rule-when-confident' },
+      );
+
+      expect(result).toEqual({
+        value: 'sold',
+        confidence: 1,
+        conflict: undefined,
+      });
+    });
+
+    it('keeps the LLM value when rule confidence is below the default threshold of 1', () => {
+      const result = merge.field(
+        'status',
+        { value: 'sold', confidence: 0.9 },
+        'available',
+        { strategy: 'prefer-rule-when-confident' },
+      );
+
+      expect(result).toEqual({
+        value: 'available',
+        confidence: merge.defaultFieldPolicy.defaultLlmConfidence,
+        conflict: undefined,
+      });
+    });
+
+    it('honours a caller-supplied lower threshold', () => {
+      const result = merge.field(
+        'status',
+        { value: 'sold', confidence: 0.8 },
+        'available',
+        { strategy: 'prefer-rule-when-confident', ruleConfidenceThreshold: 0.75 },
+      );
+
+      expect(result).toEqual({
+        value: 'sold',
+        confidence: 0.8,
+        conflict: undefined,
+      });
+    });
+
+    it('keeps the LLM value when rule confidence is strictly below a caller-supplied threshold', () => {
+      const result = merge.field(
+        'status',
+        { value: 'sold', confidence: 0.749 },
+        'available',
+        { strategy: 'prefer-rule-when-confident', ruleConfidenceThreshold: 0.75 },
+      );
+
+      expect(result).toEqual({
+        value: 'available',
+        confidence: merge.defaultFieldPolicy.defaultLlmConfidence,
+        conflict: undefined,
+      });
+    });
+
+    it('returns the rule value with the agreement confidence when rule and LLM agree, regardless of threshold', () => {
+      const result = merge.field(
+        'status',
+        { value: 'sold', confidence: 0.4 },
+        'sold',
+        { strategy: 'prefer-rule-when-confident' },
+      );
+
+      expect(result).toEqual({
+        value: 'sold',
+        confidence: merge.defaultFieldPolicy.agreementConfidence,
+        conflict: undefined,
+      });
+    });
+
+    it('returns the rule value alone when no LLM value is provided, regardless of threshold', () => {
+      const result = merge.field(
+        'status',
+        { value: 'sold', confidence: 0.2 },
+        null,
+        { strategy: 'prefer-rule-when-confident' },
+      );
+
+      expect(result).toEqual({
+        value: 'sold',
+        confidence: 0.2,
+        conflict: undefined,
+      });
+    });
+  });
 });
