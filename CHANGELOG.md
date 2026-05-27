@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-05-27
+
+Non-breaking. New `merge.reconcile` primitive: the N-ary generalization of `merge.field`. Where `merge.field` fuses a fixed (rule, llm) pair, `merge.reconcile` fuses any number of candidate sources - several rules, an LLM, external services, manual overrides - under a single policy. Agreement detection becomes cardinal (two or more concurring candidates raise confidence), and a `priority` field replaces the hard-coded rule/llm asymmetry. `merge.field` is now a thin binary adapter over `merge.reconcile`, with identical behavior.
+
+### Added
+
+- `merge.reconcile<T>(field, candidates, policy?)` - reconciles N `Candidate<T>` (`{ value, confidence, source, priority? }`) into a `ReconcileResult<T>` (`{ value, confidence, source, conflicts }`). `source` records the winning candidate, the candidates that agreed, and those that dissented.
+- `ReconcileStrategy`: `'highest-priority'`, `'highest-confidence'`, `'cascade'`, `'flag-on-conflict'`, `'prefer-when-confident'`. The legacy binary strategies map onto these (e.g. `'prefer-llm'` = `'highest-priority'` with the LLM ranked first; `'flag'` = `'flag-on-conflict'`).
+- `merge.defaultReconcilePolicy` - library defaults for `merge.reconcile` (strategy `'flag-on-conflict'`, `agreementConfidence` `1`, `conflictConfidence` `0.3`, `confidentThreshold` `1`, case-insensitive `compare`).
+- New exported types: `Candidate`, `ReconcilePolicy`, `ReconcileStrategy`, `ReconcileSource`, `ReconcileSourceKind`, `ReconcileConflict`, `ReconcileResult`.
+
+### Changed
+
+- `merge.field` is re-implemented as a binary adapter over `merge.reconcile`. Behavior, return shape, and `FieldSource` resolution are unchanged (full parity covered by the existing field tests).
+
 ## [1.7.0] - 2026-05-18
 
 Non-breaking. New conflict strategy `'prefer-rule-when-confident'` lets a rule win over the LLM only when its confidence clears a configurable threshold (default `1`), otherwise the LLM wins. Designed for fields where a perfectly-canonical regex outranks a noisy LLM extraction, while weaker rule hints still defer to the LLM. Closes the gap between `'prefer-rule'` (always trust the rule) and `'prefer-llm'` (always trust the LLM).

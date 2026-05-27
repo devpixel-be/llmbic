@@ -59,3 +59,13 @@ export type {
   NormalizerMutation,
   ValidationResult,
 } from './types/merge.types.js';
+
+export type {
+  Candidate,
+  ReconcilePolicy,
+  ReconcileStrategy,
+  ReconcileSource,
+  ReconcileSourceKind,
+  ReconcileConflict,
+  ReconcileResult,
+} from './types/reconcile.types.js';

@@ -14,8 +14,79 @@ import type {
   Normalizer,
   NormalizerMutation,
 } from './types/merge.types.js';
+import type {
+  Candidate,
+  ReconcileConflict,
+  ReconcilePolicy,
+  ReconcileResult,
+  ReconcileSource,
+  ReconcileSourceKind,
+  ReconcileStrategy,
+} from './types/reconcile.types.js';
 import { valueEquals } from './utils/value-equals.js';
 import { resolveNormalizerId } from './utils/normalizer-id.js';
+
+/**
+ * Default equality: case-insensitive for strings, strict otherwise. Shared by
+ * {@link merge.defaultFieldPolicy} and {@link merge.defaultReconcilePolicy} so
+ * the binary and N-ary merges agree on what "the same value" means.
+ */
+const defaultCompare = (a: unknown, b: unknown): boolean => {
+  if (typeof a === 'string' && typeof b === 'string') {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+  return a === b;
+};
+
+/** A candidate enriched with its effective priority and original position. */
+type RankedCandidate<T> = {
+  candidate: Candidate<T>;
+  /** Position in the input array; lower means earlier. */
+  index: number;
+  /** Effective priority: explicit `priority`, else `length - index` (earlier ranks higher). */
+  priority: number;
+};
+
+/** Order by priority desc, then confidence desc, then original position asc. */
+function byAuthority<T>(a: RankedCandidate<T>, b: RankedCandidate<T>): number {
+  return (
+    b.priority - a.priority ||
+    b.candidate.confidence - a.candidate.confidence ||
+    a.index - b.index
+  );
+}
+
+/**
+ * Pick the winning candidate per strategy. Returns `null` only for `'cascade'`
+ * when no tier clears the threshold. `present` is non-empty and in input order.
+ */
+function selectWinner<T>(
+  present: RankedCandidate<T>[],
+  policy: ReconcilePolicy,
+): RankedCandidate<T> | null {
+  switch (policy.strategy) {
+    case 'highest-confidence':
+      return [...present].sort(
+        (a, b) =>
+          b.candidate.confidence - a.candidate.confidence ||
+          b.priority - a.priority ||
+          a.index - b.index,
+      )[0]!;
+    case 'cascade':
+      return present.find((e) => e.candidate.confidence >= policy.confidentThreshold) ?? null;
+    case 'prefer-when-confident': {
+      const ranked = [...present].sort(byAuthority);
+      return (
+        ranked.find((e) => e.candidate.confidence >= policy.confidentThreshold) ??
+        ranked[ranked.length - 1]!
+      );
+    }
+    case 'highest-priority':
+    case 'flag-on-conflict':
+    default:
+      return [...present].sort(byAuthority)[0]!;
+  }
+}
 
 type FusionOutcome<T> = {
   data: ExtractedData<T>;
@@ -244,15 +315,119 @@ export const merge = {
     /** See {@link FieldMergePolicy.agreementConfidence}. */
     agreementConfidence: 1.0,
     /** See {@link FieldMergePolicy.compare}. Case-insensitive for strings, strict equality otherwise. */
-    compare: (a: unknown, b: unknown): boolean => {
-      if (typeof a === 'string' && typeof b === 'string') {
-        return a.toLowerCase() === b.toLowerCase();
-      }
-      return a === b;
-    },
+    compare: defaultCompare,
     /** See {@link FieldMergePolicy.ruleConfidenceThreshold}. */
     ruleConfidenceThreshold: 1,
   } satisfies FieldMergePolicy,
+
+  /**
+   * Library defaults applied by {@link merge.reconcile} when the caller omits
+   * one or more policy fields. Mirrors {@link merge.defaultFieldPolicy}: the
+   * default `'flag-on-conflict'` strategy keeps the most authoritative
+   * candidate while surfacing disagreements, and agreement boosts confidence
+   * to `1`.
+   *
+   * See {@link ReconcilePolicy} for the meaning of each field.
+   */
+  defaultReconcilePolicy: {
+    strategy: 'flag-on-conflict',
+    compare: defaultCompare,
+    agreementConfidence: 1.0,
+    conflictConfidence: 0.3,
+    confidentThreshold: 1,
+  } satisfies ReconcilePolicy,
+
+  /**
+   * Reconcile N candidate values for a single field into one kept value, its
+   * confidence, and its provenance. The N-ary generalization of
+   * {@link merge.field}: instead of a fixed (rule, llm) pair, any number of
+   * sources - rules, an LLM, external services, human overrides - compete
+   * under a {@link ReconcilePolicy}.
+   *
+   * Agreement is cardinal: two or more candidates sharing the kept value (per
+   * `compare`) raise the confidence to `agreementConfidence`, whatever the
+   * strategy. Every dissenting candidate is reported in `conflicts` for
+   * observability; `source.kind` records whether the value stands alone, on an
+   * agreement, despite a conflict, or after a cascade fall-through.
+   *
+   * Any policy field omitted from `policy` falls back to
+   * {@link merge.defaultReconcilePolicy}.
+   *
+   * @typeParam T - Type of the candidate values.
+   * @param field - Name of the field being reconciled (echoed into conflicts).
+   * @param candidates - One entry per source; `null`/`undefined` values are absent.
+   * @param policy - Optional strategy and confidence overrides.
+   */
+  reconcile<T>(
+    field: string,
+    candidates: Candidate<T>[],
+    policy?: Partial<ReconcilePolicy>,
+  ): ReconcileResult<T> {
+    const fullPolicy: ReconcilePolicy = { ...merge.defaultReconcilePolicy, ...policy };
+    const total = candidates.length;
+    const present = candidates
+      .map((candidate, index) => ({
+        candidate,
+        index,
+        priority: candidate.priority ?? total - index,
+      }))
+      .filter((e) => e.candidate.value !== null && e.candidate.value !== undefined);
+
+    if (present.length === 0) {
+      return { value: null, confidence: null, source: null, conflicts: [] };
+    }
+
+    const winner = selectWinner(present, fullPolicy);
+    if (winner === null) {
+      return { value: null, confidence: null, source: null, conflicts: [] };
+    }
+
+    const agreed = present.filter((e) =>
+      fullPolicy.compare(e.candidate.value, winner.candidate.value),
+    );
+    const dissenters = present.filter(
+      (e) => !fullPolicy.compare(e.candidate.value, winner.candidate.value),
+    );
+
+    let kind: ReconcileSourceKind;
+    let confidence: number;
+    if (agreed.length >= 2) {
+      kind = 'agreement';
+      confidence = fullPolicy.agreementConfidence;
+    } else if (fullPolicy.strategy === 'flag-on-conflict' && dissenters.length > 0) {
+      kind = 'conflict';
+      confidence = fullPolicy.conflictConfidence;
+    } else if (fullPolicy.strategy === 'cascade' && winner.index !== present[0]!.index) {
+      kind = 'cascade';
+      confidence = winner.candidate.confidence;
+    } else {
+      kind = 'single';
+      confidence = winner.candidate.confidence;
+    }
+
+    const conflicts: ReconcileConflict[] = dissenters.map((d) => ({
+      field,
+      winner: {
+        source: winner.candidate.source,
+        value: winner.candidate.value,
+        confidence: winner.candidate.confidence,
+      },
+      dissenter: {
+        source: d.candidate.source,
+        value: d.candidate.value,
+        confidence: d.candidate.confidence,
+      },
+    }));
+
+    const source: ReconcileSource = {
+      kind,
+      winner: winner.candidate.source,
+      agreedBy: agreed.map((e) => e.candidate.source),
+      dissentedBy: dissenters.map((e) => e.candidate.source),
+    };
+
+    return { value: winner.candidate.value as T, confidence, source, conflicts };
+  },
 
   /**
    * Fuse a rule match and an LLM value for a single field, following the
@@ -262,8 +437,10 @@ export const merge = {
    * Any policy field omitted from `policy` falls back to
    * {@link merge.defaultFieldPolicy}.
    *
-   * Decision table (in order): rule-only, llm-only, both-null, agree,
-   * prefer-rule, prefer-llm, flag (default fallback).
+   * Thin binary adapter over {@link merge.reconcile}: the rule and the LLM
+   * become two candidates, the conflict strategy maps to a reconcile strategy
+   * plus a priority order, and the result is projected back onto the binary
+   * contract (rule value kept on agreement, conflict recorded only on flag).
    *
    * @typeParam T - Type of the rule value.
    * @param field - Name of the field being merged.
@@ -285,78 +462,74 @@ export const merge = {
     const fullPolicy: FieldMergePolicy = { ...merge.defaultFieldPolicy, ...policy };
     const normalizedLlm = llmValue ?? null;
 
-    if (ruleMatch !== null && normalizedLlm === null) {
-      return {
-        value: ruleMatch.value,
-        confidence: ruleMatch.confidence,
-        conflict: undefined,
-      };
+    // Map the binary (rule, llm) policy onto the N-ary reconcile engine: the
+    // two roles become two candidates, and the conflict strategy becomes a
+    // reconcile strategy plus a priority order (which side outranks the other).
+    let strategy: ReconcileStrategy;
+    let ruleOutranksLlm = true;
+    switch (fullPolicy.strategy) {
+      case 'prefer-rule':
+        strategy = 'highest-priority';
+        break;
+      case 'prefer-llm':
+        strategy = 'highest-priority';
+        ruleOutranksLlm = false;
+        break;
+      case 'prefer-rule-when-confident':
+        strategy = 'prefer-when-confident';
+        break;
+      case 'flag':
+        strategy = 'flag-on-conflict';
+        break;
+      default:
+        logger?.warn('unknown conflict strategy, falling back to flag', {
+          strategy: fullPolicy.strategy,
+          field,
+        });
+        strategy = 'flag-on-conflict';
     }
 
-    if (ruleMatch === null && normalizedLlm !== null) {
-      return {
-        value: normalizedLlm as T,
-        confidence: fullPolicy.defaultLlmConfidence,
-        conflict: undefined,
-      };
-    }
+    const ruleCandidate: Candidate<T> | null =
+      ruleMatch !== null
+        ? { value: ruleMatch.value, confidence: ruleMatch.confidence, source: 'rule' }
+        : null;
+    const llmCandidate: Candidate<T> | null =
+      normalizedLlm !== null
+        ? { value: normalizedLlm as T, confidence: fullPolicy.defaultLlmConfidence, source: 'llm' }
+        : null;
 
-    if (ruleMatch === null || normalizedLlm === null) {
-      return { value: null, confidence: null, conflict: undefined };
-    }
+    // Array order sets the default priority (earlier ranks higher), so the
+    // outranking side goes first.
+    const ordered = ruleOutranksLlm
+      ? [ruleCandidate, llmCandidate]
+      : [llmCandidate, ruleCandidate];
+    const candidates = ordered.filter((c): c is Candidate<T> => c !== null);
 
-    if (fullPolicy.compare(ruleMatch.value, normalizedLlm)) {
-      return {
-        value: ruleMatch.value,
-        confidence: fullPolicy.agreementConfidence,
-        conflict: undefined,
-      };
-    }
+    const result = merge.reconcile<T>(field, candidates, {
+      strategy,
+      compare: fullPolicy.compare,
+      agreementConfidence: fullPolicy.agreementConfidence,
+      conflictConfidence: fullPolicy.flaggedConfidence,
+      confidentThreshold: fullPolicy.ruleConfidenceThreshold,
+    });
 
-    if (fullPolicy.strategy === 'prefer-rule') {
-      return {
-        value: ruleMatch.value,
-        confidence: ruleMatch.confidence,
-        conflict: undefined,
-      };
-    }
-    if (fullPolicy.strategy === 'prefer-llm') {
-      return {
-        value: normalizedLlm as T,
-        confidence: fullPolicy.defaultLlmConfidence,
-        conflict: undefined,
-      };
-    }
-    if (fullPolicy.strategy === 'prefer-rule-when-confident') {
-      if (ruleMatch.confidence >= fullPolicy.ruleConfidenceThreshold) {
-        return {
-          value: ruleMatch.value,
-          confidence: ruleMatch.confidence,
-          conflict: undefined,
-        };
-      }
-      return {
-        value: normalizedLlm as T,
-        confidence: fullPolicy.defaultLlmConfidence,
-        conflict: undefined,
-      };
-    }
-    if (fullPolicy.strategy !== 'flag') {
-      logger?.warn('unknown conflict strategy, falling back to flag', {
-        strategy: fullPolicy.strategy,
-        field,
-      });
-    }
-    return {
-      value: ruleMatch.value,
-      confidence: fullPolicy.flaggedConfidence,
-      conflict: {
-        field,
-        ruleValue: ruleMatch.value,
-        ruleConfidence: ruleMatch.confidence,
-        llmValue: normalizedLlm,
-      },
-    };
+    // Preserve the binary contract: on agreement the rule value is the kept
+    // representation (the reconcile winner may be the LLM candidate but carries
+    // the same value per `compare`), and a conflict record is produced only
+    // when a disagreement was flagged.
+    const value =
+      result.source?.kind === 'agreement' && ruleMatch !== null ? ruleMatch.value : result.value;
+    const conflict: Conflict | undefined =
+      result.source?.kind === 'conflict' && ruleMatch !== null
+        ? {
+            field,
+            ruleValue: ruleMatch.value,
+            ruleConfidence: ruleMatch.confidence,
+            llmValue: normalizedLlm,
+          }
+        : undefined;
+
+    return { value, confidence: result.confidence, conflict };
   },
 
   /**

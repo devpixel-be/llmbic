@@ -246,6 +246,40 @@ const extractor = createExtractor({
 
 You can override any subset of `FieldMergePolicy` per field - strategy, confidences, even the `compare` callback (e.g. fuzzy equality for free-form strings). TypeScript validates field names against your schema, so typos surface at compile time.
 
+### Reconciling N sources
+
+`merge.field` fuses exactly two candidates (a rule and the LLM). When a field is fed by **more than two** sources - several rules, the LLM, an external service, a manual override - reach for `merge.reconcile`, the N-ary generalization. `merge.field` is itself a thin binary adapter over it.
+
+```typescript
+import { merge } from 'llmbic';
+
+const result = merge.reconcile<number>('total', [
+  { value: 1250, confidence: 1, source: 'rule:invoice-line' },
+  { value: 1250, confidence: 0.8, source: 'llm' },
+  { value: 1300, confidence: 0.6, source: 'ocr' },
+], { strategy: 'highest-priority' });
+
+// result.value      -> 1250
+// result.confidence -> 1 (agreementConfidence: two sources agree)
+// result.source     -> { kind: 'agreement', winner: 'rule:invoice-line',
+//                        agreedBy: ['rule:invoice-line', 'llm'], dissentedBy: ['ocr'] }
+// result.conflicts  -> [{ field: 'total', winner: {...}, dissenter: { source: 'ocr', value: 1300, ... } }]
+```
+
+Each `Candidate<T>` carries a `value`, a `confidence`, a `source` id, and an optional `priority` (higher wins; defaults to array order, earlier ranks higher). Agreement is **cardinal**: two or more candidates sharing the kept value (per `compare`) raise the confidence to `agreementConfidence`, whatever the strategy, and every dissenter is reported in `conflicts`.
+
+Five strategies decide which single candidate wins:
+
+| Strategy | Keeps |
+|---|---|
+| `'highest-priority'` | the most authoritative candidate (ties broken by confidence) |
+| `'highest-confidence'` | the most confident candidate (ties broken by priority) |
+| `'cascade'` | the first candidate, in array order, whose confidence clears `confidentThreshold`; `null` if none do |
+| `'flag-on-conflict'` | the most authoritative candidate, lowering confidence to `conflictConfidence` and marking `source.kind: 'conflict'` when any candidate disagrees |
+| `'prefer-when-confident'` | the highest-priority candidate clearing `confidentThreshold`, else the lowest-priority fallback |
+
+Omitted policy fields fall back to `merge.defaultReconcilePolicy`.
+
 ### Cross-check mode
 
 Switch the LLM call from fill-gaps (ask only about missing fields) to cross-check (ask about every schema field, whether the rules resolved it or not):
